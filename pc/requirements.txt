@@ -1,0 +1,12 @@
+# .venv 用 ../../WifeBody/tools/python310 建：python -m venv .venv
+av
+cryptography
+numpy
+psutil
+PySide6-Essentials
+segno
+soxr
+websockets
+../../WifeBody/resources/wife_addon_sdk-0.1.0-py3-none-any.whl
+pytest
+pytest-asyncio

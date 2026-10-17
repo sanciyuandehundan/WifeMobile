@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "addon_id": "wife-mobile",
+  "name": "手机",
+  "description": "用手机当她的耳机和麦克风；不在电脑旁也能和她说话",
+  "binding": {"file": "wife-binding.json"},
+  "settings": {
+    "entrypoint": "main.py",
+    "args": ["--settings"]
+  }
+}
