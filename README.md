@@ -45,7 +45,7 @@ cd android
 .\gradlew.bat :app:assembleDebug :app:testDebugUnitTest
 ```
 
-单元测试读 `pc/tests/vectors.json`，确认手机和电脑算出一样的字节。
+单元测试读 `pc/tests/vectors.json`，确认手机和电脑算出一样的字节。Windows 用户名里有中文时，Gradle 的测试进程找不到自己的类：给 `%USERPROFILE%\.gradle` 建一个英文路径的目录联接（如 `mklink /J D:\Android\gradle-home %USERPROFILE%\.gradle`），再设 `GRADLE_USER_HOME` 指向它。
 
 **手机上的她**：把电脑上的模型文件拷进手机的 `/sdcard/Android/data/io.wife.mobile/files/brain/`：`WifeBody/models/brain-candidates/qwen2.5-7b-instruct/` 下的两个 GGUF 分片，和 `WifeBrain/output/wife-v24-q4/epoch2/wife-chat.gguf`。
 
