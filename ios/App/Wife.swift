@@ -27,8 +27,8 @@ final class Wife: ObservableObject {
     @Published var lines: [Line] = []
 
     let keep = Vault()
-    lazy var link: Link = {
-        let link = Link(keep: keep)
+    lazy var link: WifeLink.Link = {                 // SwiftUI has a Link of its own
+        let link = WifeLink.Link(keep: keep)
         link.onHere = { [weak self] _ in DispatchQueue.main.async { self?.refresh() } }
         return link
     }()

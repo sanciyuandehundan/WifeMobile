@@ -10,8 +10,8 @@ final class Voice {
     private let player = AVAudioPlayerNode()
     private let herFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48000, channels: 1, interleaved: false)!
     private let micFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: false)!
-    private var encoder: OpaquePointer?
-    private var decoder: OpaquePointer?
+    private let encoder: OpaquePointer
+    private let decoder: OpaquePointer
     private var converter: AVAudioConverter?
     private var pending: [Int16] = []
     private let lock = NSLock()
@@ -26,8 +26,8 @@ final class Voice {
     init(call: Call) {
         self.call = call
         var error: Int32 = 0
-        encoder = opus_encoder_create(16000, 1, OPUS_APPLICATION_VOIP, &error)
-        decoder = opus_decoder_create(48000, 1, &error)
+        encoder = opus_encoder_create(16000, 1, OPUS_APPLICATION_VOIP, &error)!
+        decoder = opus_decoder_create(48000, 1, &error)!
     }
 
     deinit {
@@ -87,7 +87,7 @@ final class Voice {
         pending += UnsafeBufferPointer(start: out.int16ChannelData![0], count: Int(out.frameLength))
         var packet = [UInt8](repeating: 0, count: 1500)
         while pending.count >= 320 {
-            let n = pending.withUnsafeBufferPointer { opus_encode(encoder, $0.baseAddress, 320, &packet, 1500) }
+            let n = pending.withUnsafeBufferPointer { opus_encode(encoder, $0.baseAddress!, 320, &packet, 1500) }
             if n > 0 { call.sendAudio(Data(packet[0..<Int(n)])) }
             pending.removeFirst(320)
         }
