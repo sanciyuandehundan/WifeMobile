@@ -12,7 +12,7 @@ from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 from .crypto import hk
 
 PING, PONG, AUDIO, MESSAGE, ACK, BYE = 1, 2, 3, 4, 5, 6
-KEEPALIVE, DEAD, RESEND = 5.0, 20.0, 0.3
+KEEPALIVE, DEAD, RESEND, PIECE = 5.0, 20.0, 0.3, 1000
 
 
 def call_keys(private: X25519PrivateKey, peer: bytes, link: bytes, sid: bytes, e_phone: bytes,
@@ -31,7 +31,7 @@ class Call:
         self._n = 0
         self._top, self._recent = 0, set()
         self._next_out, self._unacked = 0, {}
-        self._next_in, self._early = 1, {}
+        self._next_in, self._early, self._joined = 1, {}, bytearray()
         self._audio = 0
         self.heard = time.monotonic()
         self.rtt: float | None = None
@@ -53,10 +53,15 @@ class Call:
         self._packet(AUDIO, self._audio.to_bytes(2, "big") + frame)
 
     def message(self, message: dict) -> None:
-        self._next_out += 1
-        data = self._next_out.to_bytes(4, "big") + json.dumps(message, ensure_ascii=False, separators=(",", ":")).encode()
-        self._unacked[self._next_out] = [data, time.monotonic()]
-        self._packet(MESSAGE, data)
+        """Reliable and in order. Long ones go in 1000-byte pieces: a bigger datagram gets cut up on the way and
+        mobile networks often lose one of the parts."""
+        data = json.dumps(message, ensure_ascii=False, separators=(",", ":")).encode()
+        pieces = [data[i:i + PIECE] for i in range(0, len(data), PIECE)] or [b""]
+        for i, piece in enumerate(pieces):
+            self._next_out += 1
+            body = self._next_out.to_bytes(4, "big") + bytes([i < len(pieces) - 1]) + piece
+            self._unacked[self._next_out] = [body, time.monotonic()]
+            self._packet(MESSAGE, body)
 
     def hang_up(self) -> None:
         self._packet(BYE)
@@ -105,8 +110,12 @@ class Call:
         if seq >= self._next_in:
             self._early[seq] = data
         while self._next_in in self._early:
-            self.on_message(json.loads(self._early.pop(self._next_in)))
+            piece = self._early.pop(self._next_in)
             self._next_in += 1
+            self._joined += piece[1:]
+            if piece[0] == 0:
+                joined, self._joined = bytes(self._joined), bytearray()
+                self.on_message(json.loads(joined))
         self._packet(ACK, (self._next_in - 1).to_bytes(4, "big"))
 
     async def run(self, *, keepalive: bool) -> None:

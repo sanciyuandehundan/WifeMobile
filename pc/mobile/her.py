@@ -79,10 +79,21 @@ class Her:
         self._listen(client)
         self.client = client
         later(self.call.message, {"type": "state", "name": name, "awake": True})
+        later(lambda: self._tasks.append(asyncio.create_task(self._card())))
 
     def _listen(self, client: Client) -> None:
         """Her voice goes to the phone only; away from the computer, she knows he is out."""
         client.subscribe(topics=TOPICS, audio=True, audio_owner=True, context=None if self.near else AWAY)
+
+    async def _card(self) -> None:
+        """Her prompt and what seldom changes about her and him, for the phone to be her when it can't reach us."""
+        while not self.call.closed and self.client is not None:
+            try:
+                card = await asyncio.to_thread(self.client.request, "offline")
+                self.call.message({"type": "card", **card})
+            except Exception as exc:
+                logger.info("没拿到离线资料：%s", exc)
+            await asyncio.sleep(600)
 
     def _played(self, stream_id: int) -> None:
         if self.client is not None:

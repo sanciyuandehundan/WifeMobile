@@ -9,7 +9,7 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from mobile.bencode import encode
-from mobile.call import MESSAGE, Call, call_keys
+from mobile.call import Call, call_keys
 from mobile.crypto import dht_key, hk, link_key, seal
 from mobile.dht import public, secure_id, signed
 
@@ -35,7 +35,7 @@ def vectors() -> dict:
     assert (to_pc, to_phone) == call_keys(e_pc, e_phone_pub, link, sid, e_phone_pub, e_pc_pub)
     packets = []
     call = Call(lambda data, address: packets.append(data), sid, to_pc, to_phone, None)
-    call._packet(MESSAGE, (1).to_bytes(4, "big") + '{"type":"text","text":"你好"}'.encode())
+    call.message({"type": "text", "text": "你好"})
     return {
         "hk": {"ikm": b"ikm".hex(), "info": b"info".hex(), "out": hk(b"ikm", b"info").hex()},
         "seal": {"key": bytes(range(32)).hex(), "nonce": bytes(12).hex(), "aad": b"WM1".hex(),

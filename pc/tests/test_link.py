@@ -69,6 +69,9 @@ async def test_a_call_carries_his_words_and_voice_and_her_reply(link):
     assert len(got["messages"]) == 1 and len(got["audio"]) == 1
     got["call"].message({"type": "reply", "turn": 3, "text": "欢迎回来", "final": True})
     assert (await asyncio.wait_for(phone.messages.get(), 2))["text"] == "欢迎回来"
+    card = {"type": "card", "card": "【她】" + "她记得的事。" * 800}         # ~14 KB: sent in 1000-byte pieces
+    got["call"].message(card)
+    assert await asyncio.wait_for(phone.messages.get(), 2) == card
 
 
 async def test_a_redialled_offer_gets_the_same_answer_and_a_forgotten_phone_gets_none(link):
