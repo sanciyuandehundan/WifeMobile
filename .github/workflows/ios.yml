@@ -1,0 +1,42 @@
+# The iPhone app is built here, on GitHub's Macs: there is no Mac at home. The result is an unsigned .ipa; sign and
+# install it with an Apple ID (Sideloadly on Windows, for example). Builds only; nothing here takes part in a call.
+name: iOS
+
+on:
+  push:
+    paths: ["ios/**", "pc/tests/vectors.json", ".github/workflows/ios.yml"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The protocol, against the computer's vectors
+        working-directory: ios/WifeLink
+        run: swift test
+
+      - name: Make the Xcode project
+        working-directory: ios
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Build for iPhone (unsigned)
+        working-directory: ios
+        run: |
+          xcodebuild -project Wife.xcodeproj -scheme Wife -configuration Release -sdk iphoneos \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+
+      - name: Pack the .ipa
+        working-directory: ios
+        run: |
+          mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/Wife.app Payload/
+          zip -qr Wife-unsigned.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Wife-unsigned-ipa
+          path: ios/Wife-unsigned.ipa

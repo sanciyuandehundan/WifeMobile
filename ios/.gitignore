@@ -1,0 +1,5 @@
+Wife.xcodeproj/
+build/
+*.ipa
+Payload/
+.build/
