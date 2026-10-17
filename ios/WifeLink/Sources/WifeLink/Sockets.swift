@@ -27,21 +27,23 @@ final class Sockets {
     private let sending = DispatchQueue(label: "link-send")
 
     init(received: @escaping (Data, Endpoint) -> Void) {
-        v4 = socket(AF_INET, SOCK_DGRAM, 0)
+        let four = socket(AF_INET, SOCK_DGRAM, 0)
         var any4 = sockaddr_in()
         any4.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
         any4.sin_family = sa_family_t(AF_INET)
         _ = withUnsafePointer(to: &any4) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-            bind(v4, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
-        v6 = socket(AF_INET6, SOCK_DGRAM, 0)
+            bind(four, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+        let six = socket(AF_INET6, SOCK_DGRAM, 0)
         var only: Int32 = 1
-        setsockopt(v6, IPPROTO_IPV6, IPV6_V6ONLY, &only, socklen_t(MemoryLayout<Int32>.size))
+        setsockopt(six, IPPROTO_IPV6, IPV6_V6ONLY, &only, socklen_t(MemoryLayout<Int32>.size))
         var any6 = sockaddr_in6()
         any6.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
         any6.sin6_family = sa_family_t(AF_INET6)
         _ = withUnsafePointer(to: &any6) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-            bind(v6, $0, socklen_t(MemoryLayout<sockaddr_in6>.size)) } }
-        for fd in [v4, v6] where fd >= 0 {
+            bind(six, $0, socklen_t(MemoryLayout<sockaddr_in6>.size)) } }
+        v4 = four
+        v6 = six
+        for fd in [four, six] where fd >= 0 {
             Thread { Sockets.receive(fd, received) }.start()
         }
     }
