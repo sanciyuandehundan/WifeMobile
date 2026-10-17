@@ -15,11 +15,6 @@ def addr(host: str, port: int) -> str:
     return f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
 
 
-def parse(text: str) -> tuple[str, int]:
-    host, _, port = text.rpartition(":")
-    return host.strip("[]"), int(port)
-
-
 def _up() -> list[tuple[str, ipaddress._BaseAddress]]:
     stats = psutil.net_if_stats()
     found = []

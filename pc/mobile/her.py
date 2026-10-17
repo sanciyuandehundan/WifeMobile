@@ -11,7 +11,7 @@ from wife_addon import Client
 from .call import Call
 from .voice import MicIn, VoiceOut
 
-logger = logging.getLogger("mobile.wife")
+logger = logging.getLogger("mobile.her")
 
 ADDON_ID = "wife-mobile"
 ASR_URL = "ws://127.0.0.1:9881/v1/mic/remote?name=%E6%89%8B%E6%9C%BA"     # name=手机
@@ -117,8 +117,8 @@ class Her:
             if self.client is not None:
                 self.loop.run_in_executor(None, self._listen, self.client)
         elif kind == "text" and str(message.get("text", "")).strip() and self.client is not None:
-            text = str(message["text"]).strip()[:500]
-            self.loop.run_in_executor(None, lambda: self.client.text(text, present=True, wait=False))
+            text, client = str(message["text"]).strip()[:500], self.client
+            self.loop.run_in_executor(None, lambda: client.text(text, present=True, wait=False))
 
     def _audio(self, seq: int, frame: bytes) -> None:
         pcm = self.mic.frame(seq, frame)

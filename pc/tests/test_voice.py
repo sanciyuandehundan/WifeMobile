@@ -5,7 +5,7 @@ import time
 import av
 import numpy as np
 
-from mobile.voice import FRAME, MIC_FRAME_BYTES, MicIn, VoiceOut
+from mobile.voice import MIC_FRAME_BYTES, MicIn, VoiceOut
 
 
 def tone(rate, seconds):

@@ -87,7 +87,6 @@ class Node:
         self.votes: deque = deque(maxlen=16)       # our address as other nodes see it (BEP 42 "ip")
         self._pending: dict[bytes, asyncio.Future] = {}
         self._secrets = [os.urandom(16), os.urandom(16)]
-        self._rotated = time.monotonic()
         if cache and cache.is_file():
             saved = json.loads(cache.read_text(encoding="utf-8"))
             self.id = bytes.fromhex(saved["id"])

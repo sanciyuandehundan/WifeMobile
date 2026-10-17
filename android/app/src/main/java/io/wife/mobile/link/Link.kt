@@ -47,7 +47,6 @@ class Link(private val keep: Keep) {
         }
     }
 
-    val paired: Boolean get() = keep.load().has("key")
     fun here(): JSONObject = keep.load().optJSONObject("here") ?: JSONObject()
 
     /** From any thread: Android forbids network calls on the main one, and a button press sends from there. */

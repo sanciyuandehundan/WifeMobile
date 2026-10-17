@@ -148,12 +148,6 @@ class Offline(val folder: File, private val keep: Keep) {
             if (lora == null) "。没找到 wife-chat.gguf，用的是没训练过的底模" else ""
     }
 
-    @Synchronized
-    fun sleep() {
-        if (handle != 0L) Llama.free(handle)
-        handle = 0L
-    }
-
     /** Her answer to ``text``; ``onText`` gets what she has said so far. Returns (reply, how long it took). */
     @Synchronized
     fun answer(text: String, onText: (String) -> Unit): Pair<String, String> {

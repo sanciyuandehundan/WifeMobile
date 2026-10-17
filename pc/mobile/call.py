@@ -34,7 +34,6 @@ class Call:
         self._next_in, self._early, self._joined = 1, {}, bytearray()
         self._audio = 0
         self.heard = time.monotonic()
-        self.rtt: float | None = None
         self.closed = False
 
     # ── sending ──
@@ -94,8 +93,6 @@ class Call:
         kind, body = plain[0], plain[1:]
         if kind == PING:
             self._packet(PONG, body)
-        elif kind == PONG:
-            self.rtt = time.time() - int.from_bytes(body[:8], "big") / 1000
         elif kind == AUDIO:
             self.on_audio(int.from_bytes(body[:2], "big"), body[2:])
         elif kind == MESSAGE:

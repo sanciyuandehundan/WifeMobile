@@ -34,7 +34,6 @@ data class Screen(
     val speaker: Boolean = true,
     val note: String = "",
     val lines: List<Line> = emptyList(),
-    val find: String = "",
     val offline: String = "",             // her brain on the phone: what state it is in
     val thinking: Boolean = false,
 )
@@ -62,7 +61,7 @@ object Wife {
         val here = saved.optJSONObject("here") ?: JSONObject()
         val card = saved.optJSONObject("card")
         screen.update {
-            it.copy(paired = saved.has("key"), computer = here.optString("name"), find = here.optString("find"),
+            it.copy(paired = saved.has("key"), computer = here.optString("name"),
                     her = card?.optString("name")?.takeIf(String::isNotEmpty) ?: it.her)
         }
     }
