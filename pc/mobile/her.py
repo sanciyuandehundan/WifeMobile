@@ -53,14 +53,24 @@ class Her:
 
     # ── Wife ──
     async def _connect(self) -> None:
+        """Connects to Wife, then asks every 10 s whether she is still awake: if she was put to rest and woken
+        during the call, the SDK's next request reconnects and subscribes again."""
+        awake = None
         while not self.call.closed:
             try:
-                await asyncio.to_thread(self._subscribe)
-                return
+                if self.client is None:
+                    await asyncio.to_thread(self._subscribe)
+                else:
+                    await asyncio.to_thread(self.client.health)
+                if awake is False:
+                    self.call.message({"type": "state", "awake": True})
+                awake = True
             except Exception as exc:
-                logger.info("Wife 没有醒着（%s），10 秒后再试", exc)
-                self.call.message({"type": "state", "awake": False})
-                await asyncio.sleep(10)
+                if awake is not False:
+                    logger.info("Wife 没有醒着（%s），过一会儿再试", exc)
+                    self.call.message({"type": "state", "awake": False})
+                awake = False
+            await asyncio.sleep(10)
 
     def _subscribe(self) -> None:
         client = Client.from_binding(ADDON_ID, self.binding, timeout=10)

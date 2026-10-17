@@ -15,6 +15,7 @@ import java.net.InetSocketAddress
 import java.net.URI
 import java.net.URLDecoder
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
 import kotlin.concurrent.thread
 
 /** What the phone keeps between runs (Vault on the phone). */
@@ -31,6 +32,7 @@ class Link(private val keep: Keep) {
     } catch (e: IOException) {
         null
     }
+    private val sender = Executors.newSingleThreadExecutor { Thread(it, "link-send").apply { isDaemon = true } }
     val dht = Dht(::send)
     @Volatile var call: Call? = null
     var onHere: (JSONObject) -> Unit = {}
@@ -48,13 +50,15 @@ class Link(private val keep: Keep) {
     val paired: Boolean get() = keep.load().has("key")
     fun here(): JSONObject = keep.load().optJSONObject("here") ?: JSONObject()
 
-    fun send(data: ByteArray, to: InetSocketAddress) {
+    /** From any thread: Android forbids network calls on the main one, and a button press sends from there. */
+    fun send(data: ByteArray, to: InetSocketAddress) = sender.execute {
         val socket = if (to.address is Inet6Address) v6 else v4
         try {
             socket?.send(DatagramPacket(data, data.size, to))
         } catch (e: IOException) {                       // no route on this network: the other addresses may work
         }
     }
+
 
     private fun receive(socket: DatagramSocket) {
         val buffer = ByteArray(65536)
