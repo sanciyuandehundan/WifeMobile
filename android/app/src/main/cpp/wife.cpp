@@ -84,7 +84,12 @@ extern "C" JNIEXPORT jlong JNICALL
 Java_io_wife_mobile_brain_Llama_load(JNIEnv *env, jclass, jstring path, jint context, jint threads) {
     llama_backend_init();
     const char *file = env->GetStringUTFChars(path, nullptr);
-    llama_model *model = llama_model_load_from_file(file, llama_model_default_params());
+    llama_model_params model_params = llama_model_default_params();
+    // Keep the weights in the mapped file: repacking them copied all 4.7 GB into the heap, the phone swapped and
+    // reading her card ran at 11 tokens a second (Snapdragon 8 Elite, 2026-10-17).
+    model_params.use_extra_bufts = false;
+    model_params.load_mode = LLAMA_LOAD_MODE_MMAP;
+    llama_model *model = llama_model_load_from_file(file, model_params);
     env->ReleaseStringUTFChars(path, file);
     if (!model) return 0;
     llama_context_params params = llama_context_default_params();

@@ -88,6 +88,10 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private val brain = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { picked ->
+        Wife.importBrain(contentResolver, picked)
+    }
+
     private val microphone = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) CallService.dial(this) else Wife.note("没有麦克风权限就没法通话")
     }
@@ -105,7 +109,7 @@ class MainActivity : ComponentActivity() {
                          else lightColorScheme(primary = palette.accent, background = palette.window)
             MaterialTheme(colorScheme = scheme) {
                 val screen by Wife.screen.collectAsState()
-                Home(screen, palette,
+                Home(screen, palette, pick = { brain.launch(arrayOf("*/*")) },
                      scan = { scan.launch(ScanOptions().setPrompt("扫电脑上的配对码").setBeepEnabled(false).setOrientationLocked(false)) },
                      call = {
                          if (screen.call || screen.dialing) CallService.hangUp(this)
@@ -122,7 +126,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun Home(screen: Screen, p: Palette, scan: () -> Unit, call: () -> Unit) {
+private fun Home(screen: Screen, p: Palette, pick: () -> Unit, scan: () -> Unit, call: () -> Unit) {
     Column(Modifier.fillMaxSize().background(p.window).systemBarsPadding().imePadding().padding(horizontal = 20.dp)) {
         Spacer(Modifier.height(16.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -170,7 +174,7 @@ private fun Home(screen: Screen, p: Palette, scan: () -> Unit, call: () -> Unit)
             items(screen.lines) { line -> Bubble(line, p) }
         }
         Typing(p, screen.thinking)
-        Offline(screen, p)
+        Offline(screen, p, pick)
         TextButton(onClick = scan, modifier = Modifier.align(Alignment.CenterHorizontally)) {
             Text("重新配对", color = p.muted, fontSize = 13.sp)
         }
@@ -233,19 +237,25 @@ private fun Typing(p: Palette, thinking: Boolean) {
 }
 
 @Composable
-private fun Offline(screen: Screen, p: Palette) {
+private fun Offline(screen: Screen, p: Palette, pick: () -> Unit) {
     val (model, lora) = remember(screen.offline) { Wife.offline.files() }
     Card(p) {
         Text("连不上电脑时：手机上的她", color = p.text, fontSize = 15.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(4.dp))
         val detail = screen.offline.ifEmpty {
             when {
-                model == null -> "把电脑上她的大脑（模型和 wife-chat.gguf）放进 ${Wife.offline.folder.path}"
+                model == null -> "用数据线把电脑上她的大脑拷进手机的“下载”：两个 qwen2.5-7b-instruct 分片和 " +
+                    "wife-chat.gguf（共 4.8 GB），再点下面选中它们。"
                 Wife.offline.card() == null -> "大脑放好了。先在家和她通一次话，手机会记下她是谁。"
                 else -> "大脑放好了" + (if (lora == null) "（没有她的说话 LoRA）" else "") + "。她和电脑上是同一个大脑，只是慢一些，也不能用她的声音。"
             }
         }
         Text(detail, color = p.muted, fontSize = 12.sp)
+        if (model == null) {
+            Spacer(Modifier.height(8.dp))
+            Button(onClick = pick, enabled = !screen.thinking,
+                   colors = ButtonDefaults.buttonColors(containerColor = p.soft, contentColor = p.accent)) { Text("选择大脑文件") }
+        }
         if (model != null && !Wife.offline.awake) {
             Spacer(Modifier.height(8.dp))
             Button(onClick = { Wife.wakeOffline() }, enabled = !screen.thinking,

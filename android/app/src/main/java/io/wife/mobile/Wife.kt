@@ -1,6 +1,9 @@
 package io.wife.mobile
 
+import android.content.ContentResolver
 import android.content.Context
+import android.net.Uri
+import android.provider.OpenableColumns
 import android.speech.tts.TextToSpeech
 import io.wife.mobile.brain.Offline
 import io.wife.mobile.link.Call
@@ -48,7 +51,8 @@ object Wife {
     fun start(context: Context) {
         keep = Vault(File(context.filesDir, "link.bin"))
         link = Link(keep).apply { onHere = { refresh() } }
-        offline = Offline(context.getExternalFilesDir("brain")!!, keep)
+        // inside the app's own storage: Android wipes an Android/data folder it didn't create (it took 4.7 GB with it)
+        offline = Offline(File(context.filesDir, "brain").apply { mkdirs() }, keep)
         speech = TextToSpeech(context) { if (it == TextToSpeech.SUCCESS) speech?.language = Locale.CHINESE }
         refresh()
     }
@@ -121,6 +125,25 @@ object Wife {
             }
             screen.update { it.copy(thinking = false, offline = stats) }
             if (reply.isNotEmpty()) speech?.speak(reply, TextToSpeech.QUEUE_FLUSH, null, "her")
+        }
+    }
+
+    /** Copies the brain files he picked (from Download, say) into the app. */
+    fun importBrain(resolver: ContentResolver, picked: List<Uri>) {
+        if (picked.isEmpty()) return
+        screen.update { it.copy(thinking = true) }
+        scope.launch(Dispatchers.IO) {
+            try {
+                for ((i, uri) in picked.withIndex()) {
+                    val name = resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+                        if (it.moveToFirst()) it.getString(0) else null } ?: "brain-$i.gguf"
+                    screen.update { it.copy(offline = "正在放进第 ${i + 1}/${picked.size} 个：$name…") }
+                    resolver.openInputStream(uri)!!.use { input -> File(offline.folder, name).outputStream().use(input::copyTo) }
+                }
+                screen.update { it.copy(thinking = false, offline = "大脑放好了。") }
+            } catch (e: Exception) {
+                screen.update { it.copy(thinking = false, offline = "没放进去：${e.message}（手机空间可能不够）") }
+            }
         }
     }
 

@@ -136,7 +136,7 @@ class Offline(val folder: File, private val keep: Keep) {
         val (base, lora) = files()
         base ?: return "手机里还没有她的大脑：把电脑上的模型文件放进 ${folder.path}"
         val started = System.currentTimeMillis()
-        val loaded = Llama.load(base.path, 8192, minOf(4, Runtime.getRuntime().availableProcessors()))
+        val loaded = Llama.load(base.path, 8192, maxOf(2, Runtime.getRuntime().availableProcessors() - 2))
         if (loaded == 0L) return "她的大脑没能加载（手机内存可能不够）"
         if (lora != null && !Llama.adapter(loaded, lora.path)) {
             Llama.free(loaded)
