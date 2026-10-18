@@ -7,7 +7,7 @@ import WifeLink
 final class Voice {
     private let call: Call
     private let engine = AVAudioEngine()
-    private let player = AVAudioPlayerNode()
+    private var source: AVAudioSourceNode?
     private let herFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48000, channels: 1, interleaved: false)!
     private let micFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: false)!
     private let encoder: OpaquePointer
@@ -20,9 +20,14 @@ final class Voice {
     private var lastSeq = 0
     private var firstAt = Date()
     private var running = false
-    private let ahead = DispatchSemaphore(value: 3)       // 60 ms of her voice queued in the player at most
+    private var missing = 0
+    private var decoded = [Float](repeating: 0, count: 5760)   // her current frame, played from ``decodedAt`` on
+    private var decodedCount = 0
+    private var decodedAt = 0
     var speaker = true { didSet { route() } }
-    private(set) var micFrames = 0                     // his frames sent (shown during a call)
+    private(set) var micFrames = 0                     // his frames sent, hers in and played (shown during a call)
+    private(set) var herIn = 0
+    private(set) var herOut = 0
 
     init(call: Call) {
         self.call = call
@@ -47,17 +52,25 @@ final class Voice {
         route()                        // before the engine starts: a route change stops a running engine
         try engine.inputNode.setVoiceProcessingEnabled(true)
         try listen()
-        engine.attach(player)
-        engine.connect(player, to: engine.mainMixerNode, format: herFormat)
+        // iOS asks for her voice as fast as it plays: nothing to pace or wait for, and it carries on after a restart
+        let source = AVAudioSourceNode(format: herFormat) { [weak self] silence, _, count, list in
+            let out = UnsafeMutableAudioBufferListPointer(list)[0].mData!.assumingMemoryBound(to: Float.self)
+            if (self?.fill(out, Int(count)) ?? 0) == 0 {
+                out.update(repeating: 0, count: Int(count))
+                silence.pointee = true
+            }
+            return noErr
+        }
+        self.source = source
+        engine.attach(source)
+        engine.connect(source, to: engine.mainMixerNode, format: herFormat)
         // iOS stops the engine whenever the audio setup changes (loudspeaker on or off, a headset plugged in):
         // start it again. On his first iPhone call it stopped right away and both ways went silent.
         changes = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine,
                                                          queue: nil) { [weak self] _ in self?.changed() }
         engine.prepare()
         try engine.start()
-        player.play()
         running = true
-        Thread { [weak self] in self?.play() }.start()
     }
 
     private var changes: NSObjectProtocol?
@@ -86,7 +99,6 @@ final class Voice {
     private func resume() {
         guard running, !engine.isRunning else { return }
         try? engine.start()
-        player.play()
     }
 
     func stop() {
@@ -94,7 +106,6 @@ final class Voice {
         if let changes { NotificationCenter.default.removeObserver(changes) }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
-        ahead.signal()
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
@@ -140,57 +151,67 @@ final class Voice {
     func heard(_ seq: Int, _ frame: Data) {
         lock.lock()
         defer { lock.unlock() }
+        herIn += 1
         if next >= 0, (seq - next) & 0xFFFF >= 0x8000 { return }          // too late
         if frames.isEmpty { firstAt = Date() }
         lastSeq = seq
         frames[seq] = frame
     }
 
-    private func play() {
-        var missing = 0
-        while running, !call.closed {
-            lock.lock()
-            if next < 0 {                                   // between sentences: wait for 80 ms of the next one
-                guard frames.count >= 4 || (!frames.isEmpty && Date().timeIntervalSince(firstAt) > 0.1) else {
-                    lock.unlock()
-                    usleep(5000)
-                    continue
-                }
-                let newest = lastSeq
-                next = frames.keys.max { (newest - $0) & 0xFFFF < (newest - $1) & 0xFFFF }!   // the oldest one waiting
+    /// On the audio thread: as much of her voice as iOS asks for, or 0 while she is quiet.
+    private func fill(_ out: UnsafeMutablePointer<Float>, _ count: Int) -> Int {
+        var done = 0
+        while done < count {
+            if decodedAt == decodedCount, !decodeNext() { break }
+            let take = min(count - done, decodedCount - decodedAt)
+            decoded.withUnsafeBufferPointer { out.advanced(by: done).update(from: $0.baseAddress! + decodedAt, count: take) }
+            done += take
+            decodedAt += take
+        }
+        if done > 0 { out.advanced(by: done).update(repeating: 0, count: count - done) }
+        return done
+    }
+
+    private func decodeNext() -> Bool {
+        lock.lock()
+        if next < 0 {                                   // between sentences: wait for 80 ms of the next one
+            guard frames.count >= 4 || (!frames.isEmpty && Date().timeIntervalSince(firstAt) > 0.1) else {
+                lock.unlock()
+                return false
             }
-            while frames.count > 12 {                       // fell behind: skip ahead to 80 ms of buffer
+            let newest = lastSeq
+            next = frames.keys.max { (newest - $0) & 0xFFFF < (newest - $1) & 0xFFFF }!   // the oldest one waiting
+        }
+        if frames.count > 12 {                          // fell behind: skip ahead to 80 ms of buffer
+            while frames.count > 4 {
                 frames.removeValue(forKey: next)
                 next = (next + 1) & 0xFFFF
-                if frames.count <= 4 { break }
             }
-            let packet = frames.removeValue(forKey: next)
-            lock.unlock()
-            guard let buffer = AVAudioPCMBuffer(pcmFormat: herFormat, frameCapacity: 960) else { continue }
-            var n: Int32 = 0
-            if let packet {
-                missing = 0
-                n = packet.withUnsafeBytes {
-                    opus_decode_float(decoder, $0.bindMemory(to: UInt8.self).baseAddress, Int32(packet.count),
-                                      buffer.floatChannelData![0], 960, 0)
-                }
-            } else {
-                missing += 1
-                if missing > 3 {                           // she finished the sentence
-                    lock.lock()
-                    next = -1
-                    lock.unlock()
-                    missing = 0
-                    continue
-                }
-                n = opus_decode_float(decoder, nil, 0, buffer.floatChannelData![0], 960, 0)
-            }
-            buffer.frameLength = AVAudioFrameCount(max(0, n))
-            ahead.wait()                                     // plays in real time: at most three frames ahead
-            player.scheduleBuffer(buffer) { [weak self] in self?.ahead.signal() }
-            lock.lock()
-            next = (next + 1) & 0xFFFF
-            lock.unlock()
         }
+        let packet = frames.removeValue(forKey: next)
+        if packet == nil {
+            missing += 1
+            if missing > 3 {                            // she finished the sentence
+                next = -1
+                missing = 0
+                lock.unlock()
+                return false
+            }
+        } else {
+            missing = 0
+        }
+        next = (next + 1) & 0xFFFF
+        lock.unlock()
+        let n = decoded.withUnsafeMutableBufferPointer { pcm -> Int32 in
+            guard let packet else { return opus_decode_float(decoder, nil, 0, pcm.baseAddress!, 960, 0) }
+            return packet.withUnsafeBytes {
+                opus_decode_float(decoder, $0.bindMemory(to: UInt8.self).baseAddress, Int32(packet.count),
+                                  pcm.baseAddress!, Int32(pcm.count), 0)
+            }
+        }
+        decodedCount = max(0, Int(n))
+        decodedAt = 0
+        if packet != nil, n > 0 { herOut += 1 }
+        return decodedCount > 0
     }
 }

@@ -117,7 +117,8 @@ final class Wife: ObservableObject {
             call.tick()
             ticks += 1
             guard ticks % 10 == 0 else { return }
-            let line = "发出 \(call.sent) 个包 · 收到 \(call.got) 个 · 麦克风 \(voice.micFrames) 帧"
+            let line = "发出 \(call.sent) 个包 · 收到 \(call.got) 个 · 麦克风 \(voice.micFrames) 帧 · "
+                + "她的声音收到 \(voice.herIn) 帧、放出 \(voice.herOut) 帧"
             DispatchQueue.main.async { self?.stats = line }
         }
         ticker.resume()
