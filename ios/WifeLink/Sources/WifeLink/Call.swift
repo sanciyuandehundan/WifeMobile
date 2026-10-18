@@ -26,6 +26,9 @@ public final class Call {
     private var joined = Data()
     private var audioSeq: UInt16 = 0
     private var lastPing = Date.distantPast
+    /// How many packets went out and came in (shown during a call, to tell which way a problem is).
+    public private(set) var sent = 0
+    public private(set) var got = 0
     public private(set) var heard = Date()
     public private(set) var closed = false
 
@@ -43,6 +46,7 @@ public final class Call {
         lock.lock()
         guard !closed else { return lock.unlock() }
         n += 1
+        sent += 1
         let counter = withUnsafeBytes(of: n.bigEndian) { Data($0) }
         let header = Data("WC".utf8) + sid + counter
         let box = try! ChaChaPoly.seal(Data([kind]) + body, using: sendKey, nonce: Call.nonce(counter), authenticating: header)
@@ -99,6 +103,7 @@ public final class Call {
               let box = try? ChaChaPoly.SealedBox(nonce: Call.nonce(counterBytes), ciphertext: bytes[14..<(bytes.count - 16)],
                                                   tag: bytes.suffix(16)),
               let plain = try? ChaChaPoly.open(box, using: recvKey, authenticating: header) else { return lock.unlock() }
+        got += 1
         top = max(top, counter)
         recent.insert(counter)
         recent = recent.filter { $0 + 64 > top }

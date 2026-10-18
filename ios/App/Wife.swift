@@ -25,6 +25,7 @@ final class Wife: ObservableObject {
     @Published var speaker = true { didSet { voice?.speaker = speaker } }
     @Published var note = ""
     @Published var lines: [Line] = []
+    @Published var stats = ""
 
     let keep = Vault()
     lazy var link: WifeLink.Link = {                 // SwiftUI has a Link of its own
@@ -100,6 +101,7 @@ final class Wife: ObservableObject {
     private func started(_ call: Call, _ voice: Voice) {
         self.voice = voice
         voice.speaker = speaker
+        note = ""
         do {
             try voice.start()
         } catch {
@@ -108,10 +110,16 @@ final class Wife: ObservableObject {
         call.message(["type": "hello", "near": near])
         dialing = false
         inCall = true
-        note = ""
         let ticker = DispatchSource.makeTimerSource(queue: work)
         ticker.schedule(deadline: .now(), repeating: .milliseconds(100))
-        ticker.setEventHandler { call.tick() }
+        var ticks = 0
+        ticker.setEventHandler { [weak self] in
+            call.tick()
+            ticks += 1
+            guard ticks % 10 == 0 else { return }
+            let line = "发出 \(call.sent) 个包 · 收到 \(call.got) 个 · 麦克风 \(voice.micFrames) 帧"
+            DispatchQueue.main.async { self?.stats = line }
+        }
         ticker.resume()
         self.ticker = ticker
     }

@@ -97,6 +97,7 @@ struct Home: View {
                        Binding(get: { wife.near }, set: { wife.setNear($0) }))
                 toggle("外放", "关掉就用听筒；戴着耳机时总是从耳机出来", $wife.speaker)
             }
+            if !wife.stats.isEmpty { Text(wife.stats).font(.system(size: 12)).foregroundStyle(P.muted) }
             note
             ScrollViewReader { reader in
                 ScrollView {

@@ -22,6 +22,7 @@ final class Voice {
     private var running = false
     private let ahead = DispatchSemaphore(value: 3)       // 60 ms of her voice queued in the player at most
     var speaker = true { didSet { route() } }
+    private(set) var micFrames = 0                     // his frames sent (shown during a call)
 
     init(call: Call) {
         self.call = call
@@ -88,7 +89,10 @@ final class Voice {
         var packet = [UInt8](repeating: 0, count: 1500)
         while pending.count >= 320 {
             let n = pending.withUnsafeBufferPointer { opus_encode(encoder, $0.baseAddress!, 320, &packet, 1500) }
-            if n > 0 { call.sendAudio(Data(packet[0..<Int(n)])) }
+            if n > 0 {
+                call.sendAudio(Data(packet[0..<Int(n)]))
+                micFrames += 1
+            }
             pending.removeFirst(320)
         }
     }

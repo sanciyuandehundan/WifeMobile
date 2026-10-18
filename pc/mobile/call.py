@@ -34,6 +34,7 @@ class Call:
         self._next_in, self._early, self._joined = 1, {}, bytearray()
         self._audio = 0
         self.heard = time.monotonic()
+        self.got = {"包": 0, "声音": 0, "消息": 0}       # what came from the other side (logged at hang-up)
         self.closed = False
 
     # ── sending ──
@@ -91,6 +92,8 @@ class Call:
         self._recent = {m for m in self._recent if m > self._top - 64} | {n}
         self.addr, self.heard = addr, time.monotonic()      # follow him when his phone changes networks
         kind, body = plain[0], plain[1:]
+        self.got["包"] += 1
+        self.got["声音" if kind == AUDIO else "消息"] += kind in (AUDIO, MESSAGE)
         if kind == PING:
             self._packet(PONG, body)
         elif kind == AUDIO:

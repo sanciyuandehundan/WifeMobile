@@ -203,6 +203,12 @@ class Link:
         elif kind == "offer":
             self._answer(device, message, head, address)
 
+    def _ended(self, sid: bytes, call: Call, device: Device) -> None:
+        self.calls.pop(sid, None)
+        got = "、".join(f"{k} {v}" for k, v in call.got.items())
+        logger.info("%s 的通话结束：收到 %s，最后一个包在 %.0f 秒前", device.name, got, time.monotonic() - call.heard)
+        self.on_ended(call)
+
     def _answer(self, device: Device, offer: dict, head: bytes, address) -> None:
         for sid, (old, owner) in list(self.calls.items()):
             if owner is device:                       # he dialled again: the old call is gone
@@ -215,7 +221,7 @@ class Link:
         call.answer = head + seal(device.key, stamp({"type": "answer", "sid": offer["sid"], "re": offer["id"],
                                                      "e": b64(e_pc)}), head)
         self.calls[sid] = (call, device)
-        call.on_closed = lambda: (self.calls.pop(sid, None), self.on_ended(call))
+        call.on_closed = lambda: self._ended(sid, call, device)
         self.send(call.answer, address)
         logger.info("%s 打来了（%s）", device.name, "在电脑旁" if offer.get("near") else "在外面")
         self.on_call(call, device, bool(offer.get("near")))
