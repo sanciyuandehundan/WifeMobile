@@ -36,25 +36,62 @@ final class Voice {
         opus_decoder_destroy(decoder)
     }
 
+    struct Problem: LocalizedError {
+        let errorDescription: String?
+    }
+
     func start() throws {
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetooth, .defaultToSpeaker])
         try session.setActive(true)
+        route()                        // before the engine starts: a route change stops a running engine
         try engine.inputNode.setVoiceProcessingEnabled(true)
-        let input = engine.inputNode.outputFormat(forBus: 0)
-        converter = AVAudioConverter(from: input, to: micFormat)
-        engine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: input) { [weak self] buffer, _ in self?.heardHim(buffer) }
+        try listen()
         engine.attach(player)
         engine.connect(player, to: engine.mainMixerNode, format: herFormat)
+        // iOS stops the engine whenever the audio setup changes (loudspeaker on or off, a headset plugged in):
+        // start it again. On his first iPhone call it stopped right away and both ways went silent.
+        changes = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine,
+                                                         queue: nil) { [weak self] _ in self?.changed() }
+        engine.prepare()
         try engine.start()
         player.play()
         running = true
-        route()
         Thread { [weak self] in self?.play() }.start()
+    }
+
+    private var changes: NSObjectProtocol?
+    private let setup = DispatchQueue(label: "wife.voice")
+
+    /// Taps the microphone in whatever format it has now (a Bluetooth headset records at a different rate).
+    private func listen() throws {
+        engine.inputNode.removeTap(onBus: 0)
+        let input = engine.inputNode.outputFormat(forBus: 0)
+        guard input.sampleRate > 0, let converter = AVAudioConverter(from: input, to: micFormat) else {
+            throw Problem(errorDescription: "麦克风的格式转不过来（\(input)）")
+        }
+        self.converter = converter
+        pending = []
+        engine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: input) { [weak self] buffer, _ in self?.heardHim(buffer) }
+    }
+
+    private func changed() {
+        setup.async { [weak self] in                     // not inside the notification: tearing down there can deadlock
+            guard let self, self.running else { return }
+            try? self.listen()
+            self.resume()
+        }
+    }
+
+    private func resume() {
+        guard running, !engine.isRunning else { return }
+        try? engine.start()
+        player.play()
     }
 
     func stop() {
         running = false
+        if let changes { NotificationCenter.default.removeObserver(changes) }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         ahead.signal()
@@ -67,6 +104,7 @@ final class Voice {
         let headset = session.currentRoute.outputs.contains {
             [.headphones, .bluetoothHFP, .bluetoothA2DP, .bluetoothLE, .usbAudio].contains($0.portType) }
         try? session.overrideOutputAudioPort(speaker && !headset ? .speaker : .none)
+        resume()
     }
 
     // ── his microphone: 16 kHz, 20 ms frames ──
