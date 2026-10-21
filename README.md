@@ -67,4 +67,4 @@ cd android
 
 ## 许可证
 
-[AGPL-3.0-only](LICENSE)，和 WifeBody、AddonSDKWife 一样。
+[AGPL-3.0-only](LICENSE)，和 WifeBody、AddonSDKWife 一样。应用里带的第三方组件（llama.cpp、Opus、Bouncy Castle、ZXing 等）和它们的许可证原文在 [Android](android/app/src/main/assets/THIRD_PARTY_NOTICES.txt) 和 [iOS](ios/App/THIRD_PARTY_NOTICES.txt) 的 `THIRD_PARTY_NOTICES.txt` 里，会打进 APK 和 IPA。
