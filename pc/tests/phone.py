@@ -5,7 +5,7 @@ import asyncio
 import os
 from urllib.parse import parse_qs, unquote, urlparse
 
-from mobile.call import Call, call_keys
+from mobile.session import Session, session_keys
 from mobile.crypto import b64, hk, link_key, open_sealed, seal, stamp, unb64, x25519_pair
 
 
@@ -13,7 +13,7 @@ class Phone(asyncio.DatagramProtocol):
     def __init__(self) -> None:
         self.inbox: asyncio.Queue = asyncio.Queue()
         self.key = self.dev = None
-        self.call: Call | None = None
+        self.session: Session | None = None
         self.transport = None
 
     async def open(self) -> "Phone":
@@ -22,8 +22,8 @@ class Phone(asyncio.DatagramProtocol):
         return self
 
     def datagram_received(self, data: bytes, address) -> None:
-        if data[:2] == b"WC" and self.call:
-            self.call.received(data, address)
+        if data[:2] == b"WC" and self.session:
+            self.session.received(data, address)
         else:
             self.inbox.put_nowait((data, address))
 
@@ -55,14 +55,14 @@ class Phone(asyncio.DatagramProtocol):
     def open_reply(self, data: bytes) -> dict:
         return open_sealed(self.key, data[11:], data[:11])
 
-    async def dial(self, to, *, near: bool = True) -> dict:
+    async def dial(self, to, *, ping: int = 5) -> dict:
         sid, (private, e_phone) = os.urandom(4), x25519_pair()
-        offer = self.sealed({"type": "offer", "sid": b64(sid), "e": b64(e_phone), "near": near})
+        offer = self.sealed({"type": "offer", "sid": b64(sid), "e": b64(e_phone), "ping": ping})
         self.send(offer, to)
         data, address = await self.reply()
         answer = self.open_reply(data)
-        to_pc, to_phone = call_keys(private, unb64(answer["e"]), self.key, sid, e_phone, unb64(answer["e"]))
+        to_pc, to_phone = session_keys(private, unb64(answer["e"]), self.key, sid, e_phone, unb64(answer["e"]))
         self.messages: asyncio.Queue = asyncio.Queue()
-        self.call = Call(self.send, sid, to_pc, to_phone, address, on_message=self.messages.put_nowait)
+        self.session = Session(self.send, sid, to_pc, to_phone, address, on_message=self.messages.put_nowait)
         self.offer = offer
         return answer

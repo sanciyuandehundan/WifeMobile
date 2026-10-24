@@ -1,4 +1,4 @@
-"""Fixed inputs → outputs that the Android side must reproduce (its unit tests read vectors.json).
+"""Fixed inputs → outputs that the Android and iPhone sides must reproduce (their unit tests read vectors.json).
 
 Regenerate after changing protocol.md: ``.venv\\Scripts\\python.exe -m tests.vectors``.
 """
@@ -9,7 +9,7 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from mobile.bencode import encode
-from mobile.call import Call, call_keys
+from mobile.session import Session, session_keys
 from mobile.crypto import dht_key, hk, link_key, seal
 from mobile.dht import public, secure_id, signed
 
@@ -31,11 +31,11 @@ def vectors() -> dict:
     e_phone, e_phone_pub = _x(3)
     e_pc, e_pc_pub = _x(4)
     sid = b"\x01\x02\x03\x04"
-    to_pc, to_phone = call_keys(e_phone, e_pc_pub, link, sid, e_phone_pub, e_pc_pub)
-    assert (to_pc, to_phone) == call_keys(e_pc, e_phone_pub, link, sid, e_phone_pub, e_pc_pub)
+    to_pc, to_phone = session_keys(e_phone, e_pc_pub, link, sid, e_phone_pub, e_pc_pub)
+    assert (to_pc, to_phone) == session_keys(e_pc, e_phone_pub, link, sid, e_phone_pub, e_pc_pub)
     packets = []
-    call = Call(lambda data, address: packets.append(data), sid, to_pc, to_phone, None)
-    call.message({"type": "text", "text": "你好"})
+    session = Session(lambda data, address: packets.append(data), sid, to_pc, to_phone, None)
+    session.message({"type": "say", "text": "你好"})
     return {
         "hk": {"ikm": b"ikm".hex(), "info": b"info".hex(), "out": hk(b"ikm", b"info").hex()},
         "seal": {"key": bytes(range(32)).hex(), "nonce": bytes(12).hex(), "aad": b"WM1".hex(),
@@ -47,7 +47,7 @@ def vectors() -> dict:
         "dht": {"day": 20378, "public": public(dht).hex(), "signed": signed(b"pc", 5, b"v").hex(),
                 "signature": dht.sign(signed(b"pc", 5, b"v")).hex(),
                 "secure_id": secure_id("124.31.75.21", bytes(19) + b"\x01").hex()},
-        "call": {"sid": sid.hex(), "phone_e_private": (bytes([3]) * 32).hex(), "phone_e_public": e_phone_pub.hex(),
+        "session": {"sid": sid.hex(), "phone_e_private": (bytes([3]) * 32).hex(), "phone_e_public": e_phone_pub.hex(),
                  "pc_e_private": (bytes([4]) * 32).hex(), "pc_e_public": e_pc_pub.hex(),
                  "to_pc": to_pc.hex(), "to_phone": to_phone.hex(), "first_message_packet": packets[0].hex()},
         "bencode": {"value": "d1:ad2:id3:abce1:q4:ping1:t2:aa1:y1:qe",

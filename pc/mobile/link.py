@@ -1,4 +1,4 @@
-"""The computer's UDP port 18766 (protocol.md): pairing, handshakes, calls, and the DHT when it is chosen."""
+"""The computer's UDP port 18766 (protocol.md): pairing, handshakes, sessions, and the DHT when it is chosen."""
 from __future__ import annotations
 
 import asyncio
@@ -11,10 +11,10 @@ from urllib.parse import quote
 
 from cryptography.exceptions import InvalidTag
 
-from .call import Call, call_keys
 from .crypto import Seen, b64, day, dht_key, hk, link_key, open_sealed, seal, stamp, unb64, x25519_pair
 from .dht import BOOTSTRAP, Node
 from .net import PORT, addr, global_ipv6, lan_ipv4
+from .session import Session, session_keys
 from .store import Device, Store
 
 logger = logging.getLogger("mobile.link")
@@ -42,13 +42,13 @@ class _Port(asyncio.DatagramProtocol):
 
 
 class Link:
-    def __init__(self, store: Store, *, port: int = PORT, on_call=lambda call, device, near: None,
-                 on_ended=lambda call: None, on_paired=lambda device: None, on_show=lambda: None,
+    def __init__(self, store: Store, *, port: int = PORT, on_session=lambda session, device: None,
+                 on_ended=lambda session, device: None, on_paired=lambda device: None, on_show=lambda: None,
                  local: bool = False, bootstrap=BOOTSTRAP) -> None:
         self.store, self.port = store, port
-        self.on_call, self.on_ended, self.on_paired, self.on_show = on_call, on_ended, on_paired, on_show
+        self.on_session, self.on_ended, self.on_paired, self.on_show = on_session, on_ended, on_paired, on_show
         self.local, self.bootstrap = local, bootstrap
-        self.calls: dict[bytes, tuple[Call, Device]] = {}
+        self.sessions: dict[bytes, tuple[Session, Device]] = {}
         self.pairing: Pairing | None = None
         self.dht: Node | None = None
         self._seen = Seen()
@@ -77,8 +77,8 @@ class Link:
         self._tasks.append(asyncio.create_task(self._watch()))
 
     def stop(self) -> None:
-        for call, _device in list(self.calls.values()):
-            call.hang_up()
+        for session, _device in list(self.sessions.values()):
+            session.hang_up()
         for task in self._tasks:
             task.cancel()
         if self.dht:
@@ -101,7 +101,7 @@ class Link:
         elif data[:3] == b"WM1":
             self._handshake(data, address)
         elif data[:2] == b"WC":
-            entry = self.calls.get(data[2:6])
+            entry = self.sessions.get(data[2:6])
             if entry:
                 entry[0].received(data, address)
         elif data == b"WSHOW" and address[0] == "127.0.0.1":     # a second copy asked us to show the window
@@ -119,7 +119,7 @@ class Link:
         return here
 
     async def _watch(self) -> None:
-        """Every 30 s: tell the phones in a call when our address changed; keep the DHT entry fresh."""
+        """Every 30 s: tell the phones connected when our address changed; keep the DHT entry fresh."""
         while True:
             if self.store.find == "dht" and self.dht is None:
                 self.dht = Node(self.send, cache=self.store.dht_file, local=self.local, bootstrap=self.bootstrap)
@@ -132,8 +132,8 @@ class Link:
             changed = here != self._last_here
             self._last_here = here
             if changed:
-                for call, _device in self.calls.values():
-                    call.message(self.here())
+                for session, _device in self.sessions.values():
+                    session.message(self.here())
             if self.dht and (changed or time.time() - self._published > 3600):
                 await self.publish()
             await asyncio.sleep(30)
@@ -193,7 +193,7 @@ class Link:
             return
         kind = message.get("type")
         if kind == "offer":
-            entry = self.calls.get(unb64(message.get("sid", "")))
+            entry = self.sessions.get(unb64(message.get("sid", "")))
             if entry and entry[1] is device and getattr(entry[0], "answer_id", None) == message.get("id"):
                 return self.send(entry[0].answer, address)          # the phone didn't get our answer
         if not self._seen.fresh(message):
@@ -203,26 +203,26 @@ class Link:
         elif kind == "offer":
             self._answer(device, message, head, address)
 
-    def _ended(self, sid: bytes, call: Call, device: Device) -> None:
-        self.calls.pop(sid, None)
-        got = "、".join(f"{k} {v}" for k, v in call.got.items())
-        logger.info("%s 的通话结束：收到 %s，最后一个包在 %.0f 秒前", device.name, got, time.monotonic() - call.heard)
-        self.on_ended(call)
+    def _ended(self, sid: bytes, session: Session, device: Device) -> None:
+        self.sessions.pop(sid, None)
+        got = "、".join(f"{k} {v}" for k, v in session.got.items())
+        logger.info("%s 断开了：收到 %s，最后一个包在 %.0f 秒前", device.name, got, time.monotonic() - session.heard)
+        self.on_ended(session, device)
 
     def _answer(self, device: Device, offer: dict, head: bytes, address) -> None:
-        for sid, (old, owner) in list(self.calls.items()):
-            if owner is device:                       # he dialled again: the old call is gone
+        for sid, (old, owner) in list(self.sessions.items()):
+            if owner is device:                       # it dialled again: the old session is gone
                 old.close()
         sid, e_phone = unb64(offer["sid"]), unb64(offer["e"])
         private, e_pc = x25519_pair()
-        to_pc, to_phone = call_keys(private, e_phone, device.key, sid, e_phone, e_pc)
-        call = Call(self.send, sid, to_phone, to_pc, address)
-        call.answer_id = offer["id"]
-        call.answer = head + seal(device.key, stamp({"type": "answer", "sid": offer["sid"], "re": offer["id"],
-                                                     "e": b64(e_pc)}), head)
-        self.calls[sid] = (call, device)
-        call.on_closed = lambda: self._ended(sid, call, device)
-        self.send(call.answer, address)
-        logger.info("%s 打来了（%s）", device.name, "在电脑旁" if offer.get("near") else "在外面")
-        self.on_call(call, device, bool(offer.get("near")))
-        self._tasks = [t for t in self._tasks if not t.done()] + [asyncio.create_task(call.run(keepalive=True))]
+        to_pc, to_phone = session_keys(private, e_phone, device.key, sid, e_phone, e_pc)
+        session = Session(self.send, sid, to_phone, to_pc, address, ping=float(offer.get("ping") or 5))
+        session.answer_id = offer["id"]
+        session.answer = head + seal(device.key, stamp({"type": "answer", "sid": offer["sid"], "re": offer["id"],
+                                                        "e": b64(e_pc)}), head)
+        self.sessions[sid] = (session, device)
+        session.on_closed = lambda: self._ended(sid, session, device)
+        self.send(session.answer, address)
+        logger.info("%s 连上了（%s）", device.name, addr(*address[:2]))
+        self.on_session(session, device)
+        self._tasks = [t for t in self._tasks if not t.done()] + [asyncio.create_task(session.run())]

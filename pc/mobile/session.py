@@ -1,9 +1,10 @@
-"""One call's packets (protocol.md "通话"): encrypted with the call's keys, pings, Opus frames, reliable messages."""
+"""One session's packets (protocol.md "会话"): encrypted with the session's keys, pings, Opus frames, reliable messages."""
 from __future__ import annotations
 
 import asyncio
 import json
 import time
+from collections import deque
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
@@ -12,30 +13,35 @@ from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 from .crypto import hk
 
 PING, PONG, AUDIO, MESSAGE, ACK, BYE = 1, 2, 3, 4, 5, 6
-KEEPALIVE, DEAD, RESEND, PIECE = 5.0, 20.0, 0.3, 1000
+DEAD, RESEND, PIECE, WINDOW = 20.0, 0.3, 1000, 32
 
 
-def call_keys(private: X25519PrivateKey, peer: bytes, link: bytes, sid: bytes, e_phone: bytes,
-              e_pc: bytes) -> tuple[bytes, bytes]:
+def session_keys(private: X25519PrivateKey, peer: bytes, link: bytes, sid: bytes, e_phone: bytes,
+                 e_pc: bytes) -> tuple[bytes, bytes]:
     """(phone→computer, computer→phone)."""
     keys = hk(private.exchange(X25519PublicKey.from_public_bytes(peer)) + link, b"call" + sid + e_phone + e_pc, 64)
     return keys[:32], keys[32:]
 
 
-class Call:
-    def __init__(self, send, sid: bytes, send_key: bytes, recv_key: bytes, addr, *, on_message=lambda m: None,
-                 on_audio=lambda seq, frame: None, on_closed=lambda: None) -> None:
+class Session:
+    def __init__(self, send, sid: bytes, send_key: bytes, recv_key: bytes, addr, *, ping: float = 5.0,
+                 on_message=lambda m: None, on_audio=lambda seq, frame: None, on_closed=lambda: None) -> None:
         self._send, self.sid, self.addr = send, sid, addr
         self._out, self._in = ChaCha20Poly1305(send_key), ChaCha20Poly1305(recv_key)
         self.on_message, self.on_audio, self.on_closed = on_message, on_audio, on_closed
+        self.ping_every = ping              # the phone's pace (protocol.md: 5 s in front, 45 s for the resident service)
         self._n = 0
         self._top, self._recent = 0, set()
-        self._next_out, self._unacked = 0, {}
+        self._next_out, self._unacked, self._waiting = 0, {}, deque()
         self._next_in, self._early, self._joined = 1, {}, bytearray()
         self._audio = 0
         self.heard = time.monotonic()
-        self.got = {"包": 0, "声音": 0, "消息": 0}       # what came from the other side (logged at hang-up)
+        self.got = {"包": 0, "声音": 0, "消息": 0}       # what came from the other side (logged when it ends)
         self.closed = False
+
+    @property
+    def dead_after(self) -> float:
+        return max(DEAD, 4 * self.ping_every)
 
     # ── sending ──
     def _packet(self, kind: int, body: bytes = b"") -> None:
@@ -53,14 +59,19 @@ class Call:
         self._packet(AUDIO, self._audio.to_bytes(2, "big") + frame)
 
     def message(self, message: dict) -> None:
-        """Reliable and in order. Long ones go in 1000-byte pieces: a bigger datagram gets cut up on the way and
-        mobile networks often lose one of the parts."""
+        """Reliable and in order. Long ones go in 1000-byte pieces (a bigger datagram gets cut up on the way and
+        mobile networks often lose one of the parts), at most 32 of them out unconfirmed: a photo is hundreds."""
         data = json.dumps(message, ensure_ascii=False, separators=(",", ":")).encode()
         pieces = [data[i:i + PIECE] for i in range(0, len(data), PIECE)] or [b""]
         for i, piece in enumerate(pieces):
             self._next_out += 1
-            body = self._next_out.to_bytes(4, "big") + bytes([i < len(pieces) - 1]) + piece
-            self._unacked[self._next_out] = [body, time.monotonic()]
+            self._waiting.append(self._next_out.to_bytes(4, "big") + bytes([i < len(pieces) - 1]) + piece)
+        self._flush()
+
+    def _flush(self) -> None:
+        while self._waiting and len(self._unacked) < WINDOW:
+            body = self._waiting.popleft()
+            self._unacked[int.from_bytes(body[:4], "big")] = [body, time.monotonic()]
             self._packet(MESSAGE, body)
 
     def hang_up(self) -> None:
@@ -103,6 +114,7 @@ class Call:
         elif kind == ACK:
             upto = int.from_bytes(body[:4], "big")
             self._unacked = {s: v for s, v in self._unacked.items() if s > upto}
+            self._flush()
         elif kind == BYE:
             self.close()
 
@@ -118,19 +130,19 @@ class Call:
                 self.on_message(json.loads(joined))
         self._packet(ACK, (self._next_in - 1).to_bytes(4, "big"))
 
-    async def run(self, *, keepalive: bool) -> None:
-        """Resend unconfirmed messages, ping every 5 s (the phone keeps its NAT open), hang up after 20 s of silence."""
+    async def run(self) -> None:
+        """Resend unconfirmed messages, ping at the phone's pace (it keeps its NAT open), end after 4 pings of silence."""
         last_ping = 0.0
         while not self.closed:
             await asyncio.sleep(0.1)
             now = time.monotonic()
-            if now - self.heard > DEAD:
+            if now - self.heard > self.dead_after:
                 self.close()
                 return
             for entry in self._unacked.values():
                 if now - entry[1] > RESEND:
                     entry[1] = now
                     self._packet(MESSAGE, entry[0])
-            if keepalive and now - last_ping > KEEPALIVE:
+            if now - last_ping > self.ping_every:
                 last_ping = now
                 self.ping()

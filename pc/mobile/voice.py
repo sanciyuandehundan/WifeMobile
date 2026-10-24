@@ -1,16 +1,75 @@
-"""Opus both ways: his phone's microphone into 16 kHz PCM, her speech out as real-time 20 ms frames."""
+"""Opus both ways: his phone's microphone into 16 kHz PCM, her speech out as real-time 20 ms frames, and whole
+recordings in a message (protocol.md: each frame after its 2-byte length, all of it b64)."""
 from __future__ import annotations
 
 import asyncio
+import io
 import time
+import wave
 
 import av
 import numpy as np
 import soxr
 
+from .crypto import b64, unb64
+
 RATE, FRAME = 48000, 960                 # her voice: 48 kHz, 20 ms frames
 MIC_RATE, MIC_FRAME_BYTES = 16000, 640   # his microphone: 16 kHz, 20 ms of 16-bit samples
 TAIL = 0.2                               # the phone plays this much behind what we send
+
+
+def pack(frames: list[bytes]) -> str:
+    return b64(b"".join(len(frame).to_bytes(2, "big") + frame for frame in frames))
+
+
+def unpack(text: str) -> list[bytes]:
+    data, frames, at = unb64(text), [], 0
+    while at + 2 <= len(data):
+        size = int.from_bytes(data[at:at + 2], "big")
+        frames.append(data[at + 2:at + 2 + size])
+        at += 2 + size
+    return frames
+
+
+def wav(pcm: bytes, rate: int = MIC_RATE) -> bytes:
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(rate)
+        out.writeframes(pcm)
+    return buffer.getvalue()
+
+
+def his_recording(opus: str) -> bytes:
+    """His voice message (or a recording for his voiceprint) as 16 kHz PCM."""
+    mic = MicIn()
+    return b"".join(mic.frame(seq, frame) for seq, frame in enumerate(unpack(opus)))
+
+
+def her_recording(audio: bytes) -> tuple[str, int]:
+    """Her voice (a WAV from Wife) as a message's recording: (opus, ms)."""
+    with wave.open(io.BytesIO(audio)) as clip:
+        rate, channels = clip.getframerate(), clip.getnchannels()
+        samples = np.frombuffer(clip.readframes(clip.getnframes()), dtype=np.int16)
+    return encode_her(samples, rate, channels)
+
+
+def encode_her(samples: np.ndarray, rate: int, channels: int = 1) -> tuple[str, int]:
+    if channels > 1:
+        samples = samples[:len(samples) // channels * channels].reshape(-1, channels).mean(axis=1).astype(np.int16)
+    samples = soxr.resample(samples, rate, RATE).astype(np.int16)
+    encoder = av.CodecContext.create("libopus", "w")
+    encoder.sample_rate, encoder.layout, encoder.format, encoder.bit_rate = RATE, "mono", "s16", 32000
+    frames = []
+    for at in range(0, len(samples), FRAME):
+        chunk = np.zeros(FRAME, dtype=np.int16)
+        chunk[:len(samples[at:at + FRAME])] = samples[at:at + FRAME]
+        frame = av.AudioFrame.from_ndarray(chunk.reshape(1, -1), format="s16", layout="mono")
+        frame.sample_rate, frame.pts = RATE, at
+        frames += [bytes(packet) for packet in encoder.encode(frame)]
+    frames += [bytes(packet) for packet in encoder.encode(None)]
+    return pack(frames), len(samples) * 1000 // RATE
 
 
 class MicIn:

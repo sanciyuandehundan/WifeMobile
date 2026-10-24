@@ -89,10 +89,9 @@ class Window(AddonWindow):
         self.activateWindow()
 
     def refresh(self) -> None:
-        calls = self.bridge.calls()
-        if calls:
-            self.set_state("● 正在通话：" + "、".join(f"{n}（{'在电脑旁' if near else '在外面'}）" for n, near in calls),
-                           lit=True)
+        phones = self.bridge.phones()
+        if phones:
+            self.set_state("● 连着：" + "、".join(f"{name}（{doing}）" for name, doing in phones), lit=True)
         else:
             self.set_state("○ 现在没有手机连着")
         while self.devices.rows.count():

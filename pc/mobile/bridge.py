@@ -30,9 +30,9 @@ class Bridge(QObject):
         self.binding = root / "wife-binding.json"
         self.store = Store(root / "data")
         self.loop = asyncio.new_event_loop()
-        self.link = Link(self.store, on_call=self._call, on_ended=self._ended, on_paired=lambda d: self.paired.emit(d.name),
-                         on_show=self.show.emit)
-        self.talking: dict = {}                    # call -> (Her, device)
+        self.link = Link(self.store, on_session=self._connected, on_ended=self._ended,
+                         on_paired=lambda d: self.paired.emit(d.name), on_show=self.show.emit)
+        self.her: Her | None = None                # made on the link's thread, which it runs on
 
     def start(self) -> None:
         """Raises OSError when another copy already holds the port."""
@@ -42,6 +42,7 @@ class Bridge(QObject):
             asyncio.set_event_loop(self.loop)
             try:
                 self.loop.run_until_complete(self.link.start())
+                self.loop.run_until_complete(self._her())
             except Exception as exc:
                 ready.set_exception(exc)
                 return
@@ -64,7 +65,12 @@ class Bridge(QObject):
             except Exception:
                 logger.exception("和 Wife 绑定失败")
 
+    async def _her(self) -> None:
+        self.her = Her(self.binding, self.root / "data" / "chat")
+        self.her.start()
+
     def stop(self) -> None:
+        self.run(self.her.stop)
         self.run(self.link.stop)
         self.loop.call_soon_threadsafe(self.loop.stop)
 
@@ -81,28 +87,36 @@ class Bridge(QObject):
         self.loop.call_soon_threadsafe(call)
         return future.result(5)
 
-    # ── calls (link thread) ──
-    def _call(self, call, device, near: bool) -> None:
-        her = Her(call, self.binding, near)
-        her.start()
-        self.talking[call] = (her, device)
+    # ── phones (link thread) ──
+    def _connected(self, session, device) -> None:
+        self.her.connected(session, device)
         self.changed.emit()
 
-    def _ended(self, call) -> None:
-        entry = self.talking.pop(call, None)
-        if entry:
-            entry[0].close()
+    def _ended(self, session, device) -> None:
+        self.her.ended(session, device)
         self.changed.emit()
 
-    def calls(self) -> list[tuple[str, bool]]:
-        return self.run(lambda: [(device.name, her.near) for her, device in self.talking.values()])
+    def phones(self) -> list[tuple[str, str]]:
+        """(name, what it is doing) for each phone connected now."""
+        def phones() -> list[tuple[str, str]]:
+            her, out = self.her, []
+            for phone in her.phones.values():
+                if not phone.connected:
+                    continue
+                if her.call is not None and her.call.phone is phone:
+                    out.append((phone.device.name, "通话中，" + ("在电脑旁" if her.call.near else "不在电脑前")))
+                else:
+                    out.append((phone.device.name, "开着 Wife" if phone.app == "open" else "在后台连着"))
+            return out
+        return self.run(phones)
 
     # ── settings ──
     def forget(self, dev: bytes) -> None:
         def forget() -> None:
-            for call, (_her, device) in list(self.talking.items()):
+            for session, device in list(self.link.sessions.values()):
                 if device.dev == dev:
-                    call.hang_up()
+                    session.hang_up()
+                    self.her.forget(device)
             self.store.forget(dev)
         self.run(forget)
         self.changed.emit()

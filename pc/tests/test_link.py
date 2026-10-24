@@ -43,35 +43,47 @@ async def test_a_lost_pairing_reply_is_sent_again(link):
     assert data == phone.pair_reply and len(link.store.devices) == 1
 
 
-async def test_a_call_carries_his_words_and_voice_and_her_reply(link):
+async def test_a_session_carries_his_words_and_voice_and_her_reply(link):
     phone = await Phone().open()
     await phone.pair(link.begin_pairing(), at(link))
     got = {"messages": [], "audio": []}
 
-    def on_call(call, device, near):
-        got["near"] = near
-        call.on_message = got["messages"].append
-        call.on_audio = lambda seq, frame: got["audio"].append((seq, frame))
-        got["call"] = call
+    def on_session(session, device):
+        session.on_message = got["messages"].append
+        session.on_audio = lambda seq, frame: got["audio"].append((seq, frame))
+        got["session"] = session
 
-    link.on_call = on_call
-    answer = await phone.dial(at(link), near=False)
-    assert answer["type"] == "answer" and got["near"] is False
+    link.on_session = on_session
+    answer = await phone.dial(at(link), ping=45)
+    assert answer["type"] == "answer" and got["session"].ping_every == 45 and got["session"].dead_after == 180
     sent = []
-    phone.call._send = lambda data, address: (sent.append(data), phone.send(data, address))
-    phone.call.message({"type": "text", "text": "你好"})
-    phone.call.audio(b"opus-frame")
+    phone.session._send = lambda data, address: (sent.append(data), phone.send(data, address))
+    phone.session.message({"type": "say", "id": "a", "text": "你好"})
+    phone.session.audio(b"opus-frame")
     await asyncio.sleep(0.2)
-    assert got["messages"] == [{"type": "text", "text": "你好"}] and got["audio"] == [(1, b"opus-frame")]
+    assert got["messages"] == [{"type": "say", "id": "a", "text": "你好"}] and got["audio"] == [(1, b"opus-frame")]
     for packet in sent:                                   # someone replays what he sent: ignored
         phone.send(packet, at(link))
     await asyncio.sleep(0.2)
     assert len(got["messages"]) == 1 and len(got["audio"]) == 1
-    got["call"].message({"type": "reply", "turn": 3, "text": "欢迎回来", "final": True})
+    got["session"].message({"type": "reply", "turn": 3, "text": "欢迎回来", "final": True})
     assert (await asyncio.wait_for(phone.messages.get(), 2))["text"] == "欢迎回来"
     card = {"type": "card", "card": "【她】" + "她记得的事。" * 800}         # ~14 KB: sent in 1000-byte pieces
-    got["call"].message(card)
+    got["session"].message(card)
     assert await asyncio.wait_for(phone.messages.get(), 2) == card
+
+
+async def test_a_photo_goes_out_32_pieces_at_a_time(link):
+    phone = await Phone().open()
+    await phone.pair(link.begin_pairing(), at(link))
+    sessions = []
+    link.on_session = lambda session, device: sessions.append(session)
+    await phone.dial(at(link))
+    photo = {"type": "photo", "id": "p", "jpeg": "x" * 300_000}            # 300 pieces
+    sessions[0].message(photo)
+    assert len(sessions[0]._unacked) == 32 and len(sessions[0]._waiting) == 300 - 32 + 1
+    assert await asyncio.wait_for(phone.messages.get(), 10) == photo
+    assert not sessions[0]._unacked and not sessions[0]._waiting
 
 
 async def test_a_redialled_offer_gets_the_same_answer_and_a_forgotten_phone_gets_none(link):
