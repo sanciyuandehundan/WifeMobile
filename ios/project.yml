@@ -27,9 +27,10 @@ targets:
         CFBundleVersion: "1"
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
-        UIBackgroundModes: [audio]
-        NSMicrophoneUsageDescription: 通话时手机当你的麦克风，你的声音传给电脑上的她。
-        NSCameraUsageDescription: 扫电脑上的配对码。
+        UIBackgroundModes: [audio, fetch]
+        BGTaskSchedulerPermittedIdentifiers: [io.wife.mobile.fetch]
+        NSMicrophoneUsageDescription: 打电话和发语音时用，你的声音传给电脑上的她。
+        NSCameraUsageDescription: 扫电脑上的配对码，拍照片发给她。
         NSLocalNetworkUsageDescription: 在家时直接连电脑上的她。
     settings:
       base:

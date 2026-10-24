@@ -2,18 +2,15 @@ import AVFoundation
 import Copus
 import WifeLink
 
-/// The iPhone as his microphone and her speaker during a call (protocol.md 包). Voice processing (iOS's echo
+/// The iPhone as his microphone and her speaker during a call (protocol.md 声音的编码). Voice processing (iOS's echo
 /// canceller) keeps her voice from the speaker out of the microphone.
 final class Voice {
-    private let call: Call
+    private let session: Session
     private let engine = AVAudioEngine()
     private var source: AVAudioSourceNode?
     private let herFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48000, channels: 1, interleaved: false)!
-    private let micFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: false)!
-    private let encoder: OpaquePointer
+    private let mic = MicEncoder()
     private let decoder: OpaquePointer
-    private var converter: AVAudioConverter?
-    private var pending: [Int16] = []
     private let lock = NSLock()
     private var frames: [Int: Data] = [:]
     private var next = -1
@@ -29,21 +26,13 @@ final class Voice {
     private(set) var herIn = 0
     private(set) var herOut = 0
 
-    init(call: Call) {
-        self.call = call
+    init(session: Session) {
+        self.session = session
         var error: Int32 = 0
-        encoder = opus_encoder_create(16000, 1, OPUS_APPLICATION_VOIP, &error)!
         decoder = opus_decoder_create(48000, 1, &error)!
     }
 
-    deinit {
-        opus_encoder_destroy(encoder)
-        opus_decoder_destroy(decoder)
-    }
-
-    struct Problem: LocalizedError {
-        let errorDescription: String?
-    }
+    deinit { opus_decoder_destroy(decoder) }
 
     func start() throws {
         let session = AVAudioSession.sharedInstance()
@@ -80,11 +69,7 @@ final class Voice {
     private func listen() throws {
         engine.inputNode.removeTap(onBus: 0)
         let input = engine.inputNode.outputFormat(forBus: 0)
-        guard input.sampleRate > 0, let converter = AVAudioConverter(from: input, to: micFormat) else {
-            throw Problem(errorDescription: "麦克风的格式转不过来（\(input)）")
-        }
-        self.converter = converter
-        pending = []
+        try mic.reset(input)
         engine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: input) { [weak self] buffer, _ in self?.heardHim(buffer) }
     }
 
@@ -121,28 +106,10 @@ final class Voice {
     // ── his microphone: 16 kHz, 20 ms frames ──
 
     private func heardHim(_ buffer: AVAudioPCMBuffer) {
-        guard let converter, !call.closed else { return }
-        let capacity = AVAudioFrameCount(Double(buffer.frameLength) * 16000 / buffer.format.sampleRate) + 64
-        guard let out = AVAudioPCMBuffer(pcmFormat: micFormat, frameCapacity: capacity) else { return }
-        var given = false
-        converter.convert(to: out, error: nil) { _, status in
-            if given {
-                status.pointee = .noDataNow
-                return nil
-            }
-            given = true
-            status.pointee = .haveData
-            return buffer
-        }
-        pending += UnsafeBufferPointer(start: out.int16ChannelData![0], count: Int(out.frameLength))
-        var packet = [UInt8](repeating: 0, count: 1500)
-        while pending.count >= 320 {
-            let n = pending.withUnsafeBufferPointer { opus_encode(encoder, $0.baseAddress!, 320, &packet, 1500) }
-            if n > 0 {
-                call.sendAudio(Data(packet[0..<Int(n)]))
-                micFrames += 1
-            }
-            pending.removeFirst(320)
+        guard !session.closed else { return }
+        for frame in mic.encode(buffer) {
+            session.sendAudio(frame)
+            micFrames += 1
         }
     }
 

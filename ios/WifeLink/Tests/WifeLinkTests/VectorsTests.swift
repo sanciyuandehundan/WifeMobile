@@ -50,19 +50,19 @@ final class VectorsTests: XCTestCase {
         XCTAssertFalse(Crypto.edVerify(hex("dht", "public"), signed + Data([0]), hex("dht", "signature")))
     }
 
-    func testCallKeysAndTheFirstPacket() throws {
-        let phone = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: hex("call", "phone_e_private"))
-        let (toPc, toPhone) = try Crypto.callKeys(phone, peer: hex("call", "pc_e_public"), link: hex("link", "key"),
-                                                  sid: hex("call", "sid"), ePhone: hex("call", "phone_e_public"),
-                                                  ePc: hex("call", "pc_e_public"))
-        XCTAssertEqual(hex(toPc), v["call"]!["to_pc"] as? String)
-        XCTAssertEqual(hex(toPhone), v["call"]!["to_phone"] as? String)
+    func testSessionKeysAndTheFirstPacket() throws {
+        let phone = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: hex("session", "phone_e_private"))
+        let (toPc, toPhone) = try Crypto.sessionKeys(phone, peer: hex("session", "pc_e_public"), link: hex("link", "key"),
+                                                     sid: hex("session", "sid"), ePhone: hex("session", "phone_e_public"),
+                                                     ePc: hex("session", "pc_e_public"))
+        XCTAssertEqual(hex(toPc), v["session"]!["to_pc"] as? String)
+        XCTAssertEqual(hex(toPhone), v["session"]!["to_phone"] as? String)
         var sent: [Data] = []
-        Call(send: { data, _ in sent.append(data) }, sid: hex("call", "sid"), sendKey: toPc, recvKey: toPhone, address: there)
-            .message(json: Data(#"{"type":"text","text":"你好"}"#.utf8))
-        XCTAssertEqual(hex(sent[0]), v["call"]!["first_message_packet"] as? String)
+        Session(send: { data, _ in sent.append(data) }, sid: hex("session", "sid"), sendKey: toPc, recvKey: toPhone, address: there)
+            .message(json: Data(#"{"type":"say","text":"你好"}"#.utf8))
+        XCTAssertEqual(hex(sent[0]), v["session"]!["first_message_packet"] as? String)
         var heard: [String] = []
-        let computer = Call(send: { _, _ in }, sid: hex("call", "sid"), sendKey: toPhone, recvKey: toPc, address: there)
+        let computer = Session(send: { _, _ in }, sid: hex("session", "sid"), sendKey: toPhone, recvKey: toPc, address: there)
         computer.onMessage = { heard.append($0["text"] as! String) }
         computer.received(sent[0], from: there)
         computer.received(sent[0], from: there)            // replayed: ignored
@@ -73,10 +73,10 @@ final class VectorsTests: XCTestCase {
         var sent: [Data] = []
         let one = Crypto.bytes(32), two = Crypto.bytes(32), sid = Data([1, 2, 3, 4])
         let card = String(repeating: "她记得的事。", count: 800)
-        Call(send: { data, _ in sent.append(data) }, sid: sid, sendKey: one, recvKey: two, address: there)
+        Session(send: { data, _ in sent.append(data) }, sid: sid, sendKey: one, recvKey: two, address: there)
             .message(["card": card])
         var heard: [String] = []
-        let phone = Call(send: { _, _ in }, sid: sid, sendKey: two, recvKey: one, address: there)
+        let phone = Session(send: { _, _ in }, sid: sid, sendKey: two, recvKey: one, address: there)
         phone.onMessage = { heard.append($0["card"] as! String) }
         sent.reversed().forEach { phone.received($0, from: there) }     // out of order on the way
         XCTAssertGreaterThan(sent.count, 10)

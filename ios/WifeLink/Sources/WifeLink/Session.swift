@@ -1,16 +1,18 @@
 import CryptoKit
 import Foundation
 
-/// One call's packets (protocol.md 通话), the same as pc/mobile/call.py and the Android Call.kt.
-public final class Call {
+/// One session's packets (protocol.md 会话), the same as pc/mobile/session.py and the Android Session.kt.
+public final class Session {
     public static let ping: UInt8 = 1, pong: UInt8 = 2, audio: UInt8 = 3, message: UInt8 = 4, ack: UInt8 = 5, bye: UInt8 = 6
-    static let piece = 1000
+    static let piece = 1000, window = 32
 
     public let sid: Data
     public private(set) var address: Endpoint
     public var onMessage: ([String: Any]) -> Void = { _ in }
     public var onAudio: (Int, Data) -> Void = { _, _ in }
     public var onClosed: () -> Void = {}
+    /// Seconds between pings, the pace the computer was told (5 with the app in front).
+    public var pingEvery: TimeInterval
 
     private let send: (Data, Endpoint) -> Void
     private let sendKey: SymmetricKey
@@ -21,6 +23,7 @@ public final class Call {
     private var recent = Set<UInt64>()
     private var nextOut: UInt32 = 0
     private var unacked: [UInt32: (Data, Date)] = [:]
+    private var waiting: [Data] = []                   // message pieces waiting for room among the 32 unconfirmed
     private var nextIn: UInt32 = 1
     private var early: [UInt32: Data] = [:]
     private var joined = Data()
@@ -32,12 +35,14 @@ public final class Call {
     public private(set) var heard = Date()
     public private(set) var closed = false
 
-    public init(send: @escaping (Data, Endpoint) -> Void, sid: Data, sendKey: Data, recvKey: Data, address: Endpoint) {
+    public init(send: @escaping (Data, Endpoint) -> Void, sid: Data, sendKey: Data, recvKey: Data, address: Endpoint,
+                pingEvery: TimeInterval = 5) {
         self.send = send
         self.sid = sid
         self.sendKey = SymmetricKey(data: sendKey)
         self.recvKey = SymmetricKey(data: recvKey)
         self.address = address
+        self.pingEvery = pingEvery
     }
 
     private static func nonce(_ counter: Data) -> ChaChaPoly.Nonce { try! ChaChaPoly.Nonce(data: Data(count: 4) + counter) }
@@ -49,7 +54,7 @@ public final class Call {
         sent += 1
         let counter = withUnsafeBytes(of: n.bigEndian) { Data($0) }
         let header = Data("WC".utf8) + sid + counter
-        let box = try! ChaChaPoly.seal(Data([kind]) + body, using: sendKey, nonce: Call.nonce(counter), authenticating: header)
+        let box = try! ChaChaPoly.seal(Data([kind]) + body, using: sendKey, nonce: Session.nonce(counter), authenticating: header)
         let to = address
         lock.unlock()
         send(header + box.ciphertext + box.tag, to)
@@ -60,27 +65,38 @@ public final class Call {
         audioSeq &+= 1
         let seq = audioSeq
         lock.unlock()
-        packet(Call.audio, withUnsafeBytes(of: seq.bigEndian) { Data($0) } + frame)
+        packet(Session.audio, withUnsafeBytes(of: seq.bigEndian) { Data($0) } + frame)
     }
 
     public func message(_ message: [String: Any]) { self.message(json: JSON.data(message)) }
 
-    /// Reliable and in order; long messages go in 1000-byte pieces.
+    /// Reliable and in order; long messages go in 1000-byte pieces, at most 32 of them out unconfirmed.
     public func message(json data: Data) {
-        let pieces = data.isEmpty ? [Data()] : stride(from: 0, to: data.count, by: Call.piece).map {
-            Data(data[$0..<min($0 + Call.piece, data.count)]) }
+        let pieces = data.isEmpty ? [Data()] : stride(from: 0, to: data.count, by: Session.piece).map {
+            Data(data[$0..<min($0 + Session.piece, data.count)]) }
+        lock.lock()
         for (i, piece) in pieces.enumerated() {
-            lock.lock()
             nextOut += 1
-            let body = withUnsafeBytes(of: nextOut.bigEndian) { Data($0) } + Data([i < pieces.count - 1 ? 1 : 0]) + piece
-            unacked[nextOut] = (body, Date())
-            lock.unlock()
-            packet(Call.message, body)
+            waiting.append(withUnsafeBytes(of: nextOut.bigEndian) { Data($0) } + Data([i < pieces.count - 1 ? 1 : 0]) + piece)
         }
+        lock.unlock()
+        flush()
+    }
+
+    private func flush() {
+        var out: [Data] = []
+        lock.lock()
+        while !waiting.isEmpty, unacked.count < Session.window {
+            let body = waiting.removeFirst()
+            unacked[body.prefix(4).reduce(UInt32(0)) { $0 << 8 | UInt32($1) }] = (body, Date())
+            out.append(body)
+        }
+        lock.unlock()
+        out.forEach { packet(Session.message, $0) }
     }
 
     public func hangUp() {
-        packet(Call.bye)
+        packet(Session.bye)
         close()
     }
 
@@ -100,7 +116,7 @@ public final class Call {
         let counter = counterBytes.reduce(UInt64(0)) { $0 << 8 | UInt64($1) }
         lock.lock()
         guard counter > top || (counter + 64 > top && !recent.contains(counter)),
-              let box = try? ChaChaPoly.SealedBox(nonce: Call.nonce(counterBytes), ciphertext: bytes[14..<(bytes.count - 16)],
+              let box = try? ChaChaPoly.SealedBox(nonce: Session.nonce(counterBytes), ciphertext: bytes[14..<(bytes.count - 16)],
                                                   tag: bytes.suffix(16)),
               let plain = try? ChaChaPoly.open(box, using: recvKey, authenticating: header) else { return lock.unlock() }
         got += 1
@@ -113,18 +129,19 @@ public final class Call {
         let kind = plain[plain.startIndex]
         let body = Data(plain.dropFirst())
         switch kind {
-        case Call.ping:
-            packet(Call.pong, body)
-        case Call.audio where body.count >= 2:
+        case Session.ping:
+            packet(Session.pong, body)
+        case Session.audio where body.count >= 2:
             onAudio(Int(body[0]) << 8 | Int(body[1]), Data(body.dropFirst(2)))
-        case Call.message where body.count >= 5:
+        case Session.message where body.count >= 5:
             deliver(body.prefix(4).reduce(UInt32(0)) { $0 << 8 | UInt32($1) }, Data(body.dropFirst(4)))
-        case Call.ack where body.count >= 4:
+        case Session.ack where body.count >= 4:
             let upto = body.prefix(4).reduce(UInt32(0)) { $0 << 8 | UInt32($1) }
             lock.lock()
             unacked = unacked.filter { $0.key > upto }
             lock.unlock()
-        case Call.bye:
+            flush()
+        case Session.bye:
             close()
         default:
             break
@@ -145,23 +162,23 @@ public final class Call {
         }
         let upto = nextIn - 1
         lock.unlock()
-        packet(Call.ack, withUnsafeBytes(of: upto.bigEndian) { Data($0) })
+        packet(Session.ack, withUnsafeBytes(of: upto.bigEndian) { Data($0) })
         whole.forEach(onMessage)
     }
 
-    /// Call every 100 ms: resends what wasn't confirmed, pings every 5 s, hangs up after 20 s of silence.
+    /// Call every 100 ms: resends what wasn't confirmed, pings at its pace, ends after 4 pings of silence (20 s at least).
     public func tick(_ now: Date = Date()) {
-        if now.timeIntervalSince(heard) > 20 { return close() }
+        if now.timeIntervalSince(heard) > max(20, 4 * pingEvery) { return close() }
         lock.lock()
         var again: [Data] = []
         for (seq, entry) in unacked where now.timeIntervalSince(entry.1) > 0.3 {
             unacked[seq] = (entry.0, now)
             again.append(entry.0)
         }
-        let pingNow = now.timeIntervalSince(lastPing) > 5
+        let pingNow = now.timeIntervalSince(lastPing) > pingEvery
         if pingNow { lastPing = now }
         lock.unlock()
-        again.forEach { packet(Call.message, $0) }
-        if pingNow { packet(Call.ping, withUnsafeBytes(of: UInt64(Crypto.now()).bigEndian) { Data($0) }) }
+        again.forEach { packet(Session.message, $0) }
+        if pingNow { packet(Session.ping, withUnsafeBytes(of: UInt64(Crypto.now()).bigEndian) { Data($0) }) }
     }
 }

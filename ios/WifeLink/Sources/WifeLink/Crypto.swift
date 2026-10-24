@@ -85,7 +85,7 @@ public enum Crypto {
     }
 
     /// (phone→computer, computer→phone)
-    public static func callKeys(_ key: Curve25519.KeyAgreement.PrivateKey, peer: Data, link: Data, sid: Data,
+    public static func sessionKeys(_ key: Curve25519.KeyAgreement.PrivateKey, peer: Data, link: Data, sid: Data,
                                 ePhone: Data, ePc: Data) throws -> (Data, Data) {
         let keys = hk(try agree(key, peer) + link, Data("call".utf8) + sid + ePhone + ePc, 64)
         return (Data(keys.prefix(32)), Data(keys.suffix(32)))

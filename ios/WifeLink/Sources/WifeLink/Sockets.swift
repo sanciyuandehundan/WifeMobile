@@ -20,7 +20,7 @@ public struct Endpoint: Hashable, CustomStringConvertible {
     public var description: String { v6 ? "[\(host)]:\(port)" : "\(host):\(port)" }
 }
 
-/// The phone's two UDP ports: one IPv4 (handshakes, calls, DHT) and one IPv6 (calls).
+/// The phone's two UDP ports: one IPv4 (handshakes, sessions, DHT) and one IPv6 (sessions).
 final class Sockets {
     private let v4: Int32
     private let v6: Int32
@@ -46,6 +46,12 @@ final class Sockets {
         for fd in [four, six] where fd >= 0 {
             Thread { Sockets.receive(fd, received) }.start()
         }
+    }
+
+    /// iOS takes a suspended app's sockets back: closed, its receiving threads end.
+    func close() {
+        Darwin.close(v4)
+        Darwin.close(v6)
     }
 
     /// From any thread; packets leave in order.

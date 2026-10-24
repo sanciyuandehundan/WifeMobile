@@ -7,12 +7,12 @@ public protocol Keep: AnyObject {
     func update(_ change: (inout [String: Any]) -> Void)
 }
 
-/// The phone's side of protocol.md: pairing, finding the computer, dialling, and the DHT when needed. Its calls
+/// The phone's side of protocol.md: pairing, finding the computer, dialling, and the DHT when needed. Its methods
 /// block: run them off the main thread. iOS lets an app broadcast only with a multicast entitlement from Apple, so
 /// the phone sends to the addresses it knows (from the code it scanned, and the computer's "here" since).
 public final class Link {
     public var onHere: ([String: Any]) -> Void = { _ in }
-    public private(set) var call: Call?
+    public private(set) var session: Session?
     private let keep: Keep
     private var sockets: Sockets!
     private var dht: Dht!
@@ -31,7 +31,13 @@ public final class Link {
 
     public func here() -> [String: Any] { keep.load()["here"] as? [String: Any] ?? [:] }
 
-    public func ended() { call = nil }
+    public func ended() { session = nil }
+
+    /// Back in front after being suspended: iOS may have taken the sockets back, so new ones (no session is alive).
+    public func reopen() {
+        sockets.close()
+        sockets = Sockets { [weak self] data, from in self?.received(data, from: from) }
+    }
 
     private func received(_ data: Data, from: Endpoint) {
         guard let first = data.first else { return }
@@ -41,9 +47,9 @@ public final class Link {
             complete("pair:" + Crypto.b64(Data(data[data.startIndex + 3 ..< data.startIndex + 35])), data)
         } else if data.starts(with: Data("WM1".utf8)) {
             handshake(Data(data), from: from)
-        } else if data.starts(with: Data("WC".utf8)), let call, data.count > 6,
-                  Data(data[data.startIndex + 2 ..< data.startIndex + 6]) == call.sid {
-            call.received(data, from: from)
+        } else if data.starts(with: Data("WC".utf8)), let session, data.count > 6,
+                  Data(data[data.startIndex + 2 ..< data.startIndex + 6]) == session.sid {
+            session.received(data, from: from)
         }
     }
 
@@ -149,14 +155,15 @@ public final class Link {
     }
 
     /// Dials the computer at its home and outside addresses at once; when that fails and it was chosen, asks BT's DHT
-    /// once where the computer is now. ``ready`` sets up the call before its first packet can arrive.
-    public func dial(near: Bool, ready: (Call) -> Void) -> Call? {
+    /// once where the computer is now. ``ping``: seconds between pings (protocol.md 会话). ``ready`` sets up the session
+    /// before its first packet can arrive.
+    public func dial(ping: Int = 5, ready: (Session) -> Void) -> Session? {
         let saved = keep.load()
         guard let key = (saved["key"] as? String).flatMap(Crypto.unb64), let dev = (saved["dev"] as? String).flatMap(Crypto.unb64)
         else { return nil }
         let sid = Crypto.bytes(4)
         let (secret, ePhone) = Crypto.x25519()
-        let offer = Crypto.stamp(["type": "offer", "sid": Crypto.b64(sid), "e": Crypto.b64(ePhone), "near": near])
+        let offer = Crypto.stamp(["type": "offer", "sid": Crypto.b64(sid), "e": Crypto.b64(ePhone), "ping": ping])
         let packet = head(dev) + Crypto.seal(key, offer, aad: head(dev))
         let waitingFor = "answer:" + (offer["id"] as! String)
         func targets(_ here: [String: Any]) -> [Endpoint] { addresses(here["lan"]) + addresses(here["away"]) }
@@ -169,13 +176,13 @@ public final class Link {
         }
         guard let answered = reply as? ([String: Any], Endpoint),
               let ePc = (answered.0["e"] as? String).flatMap(Crypto.unb64),
-              let keys = try? Crypto.callKeys(secret, peer: ePc, link: key, sid: sid, ePhone: ePhone, ePc: ePc)
+              let keys = try? Crypto.sessionKeys(secret, peer: ePc, link: key, sid: sid, ePhone: ePhone, ePc: ePc)
         else { return nil }
-        let call = Call(send: { [weak self] data, to in self?.sockets.send(data, to: to) }, sid: sid, sendKey: keys.0,
-                        recvKey: keys.1, address: answered.1)
-        ready(call)
-        self.call = call
-        return call
+        let session = Session(send: { [weak self] data, to in self?.sockets.send(data, to: to) }, sid: sid, sendKey: keys.0,
+                              recvKey: keys.1, address: answered.1, pingEvery: TimeInterval(ping))
+        ready(session)
+        self.session = session
+        return session
     }
 
     /// The computer's latest "here" on the DHT (today's key, then yesterday's).
