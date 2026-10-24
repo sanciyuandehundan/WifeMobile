@@ -34,7 +34,7 @@ class Link(private val keep: Keep) {
     }
     private val sender = Executors.newSingleThreadExecutor { Thread(it, "link-send").apply { isDaemon = true } }
     val dht = Dht(::send)
-    @Volatile var call: Call? = null
+    @Volatile var session: Session? = null
     var onHere: (JSONObject) -> Unit = {}
     private val waiting = ConcurrentHashMap<String, CompletableDeferred<Pair<JSONObject, InetSocketAddress>>>()
     private val pairing = ConcurrentHashMap<String, CompletableDeferred<Pair<ByteArray, InetSocketAddress>>>()
@@ -75,7 +75,7 @@ class Link(private val keep: Keep) {
                 data[0] == 'd'.code.toByte() -> dht.received(data, from)
                 data.startsWith("WP1") && data.size > 35 -> pairing[Crypto.b64(data.copyOfRange(3, 35))]?.complete(data to from)
                 data.startsWith("WM1") -> handshake(data, from)
-                data.startsWith("WC") -> call?.takeIf { it.sid.contentEquals(data.copyOfRange(2, 6)) }?.received(data, from)
+                data.startsWith("WC") -> session?.takeIf { it.sid.contentEquals(data.copyOfRange(2, 6)) }?.received(data, from)
             }
         }
     }
@@ -158,9 +158,9 @@ class Link(private val keep: Keep) {
     }
 
     /** Dials the computer: the home network and its outside addresses at once; when that fails and it was chosen,
-     *  asks BT's DHT once where the computer is now. Null when nothing answers. ``ready`` sets up the call before
-     *  its first packet can arrive. */
-    suspend fun dial(near: Boolean, ready: (Call) -> Unit = {}): Call? = withContext(Dispatchers.IO) {
+     *  asks BT's DHT once where the computer is now. Null when nothing answers. ``ping``: seconds between pings
+     *  (protocol.md 会话). ``ready`` sets up the session before its first packet can arrive. */
+    suspend fun dial(ping: Int, ready: (Session) -> Unit = {}): Session? = withContext(Dispatchers.IO) {
         val saved = keep.load()
         if (!saved.has("key")) return@withContext null
         val key = Crypto.unb64(saved.getString("key"))
@@ -168,7 +168,7 @@ class Link(private val keep: Keep) {
         val sid = Crypto.bytes(4)
         val (private, ePhone) = Crypto.x25519()
         val offer = Crypto.stamp(JSONObject().put("type", "offer").put("sid", Crypto.b64(sid)).put("e", Crypto.b64(ePhone))
-                                     .put("near", near))
+                                     .put("ping", ping))
         val packet = head(dev) + Crypto.seal(key, offer, head(dev))
         val reply = CompletableDeferred<Pair<JSONObject, InetSocketAddress>>()
         waiting[offer.getString("id")] = reply
@@ -184,8 +184,8 @@ class Link(private val keep: Keep) {
         waiting.remove(offer.getString("id"))
         val (message, from) = answer ?: return@withContext null
         val ePc = Crypto.unb64(message.getString("e"))
-        val (toPc, toPhone) = Crypto.callKeys(private, ePc, key, sid, ePhone, ePc)
-        Call(::send, sid, toPc, toPhone, from).also { ready(it); call = it }     // handlers in place before packets
+        val (toPc, toPhone) = Crypto.sessionKeys(private, ePc, key, sid, ePhone, ePc)
+        Session(::send, sid, toPc, toPhone, from, ping * 1000L).also { ready(it); session = it }   // handlers before packets
     }
 
     /** The computer's latest here on the DHT (today's key, then yesterday's). */

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Where the camera puts a photo he takes for her, before it is shrunk and sent (MainActivity). -->
+<paths>
+    <cache-path name="photos" path="photos/" />
+</paths>

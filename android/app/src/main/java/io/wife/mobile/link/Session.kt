@@ -6,28 +6,32 @@ import java.io.ByteArrayOutputStream
 import java.net.InetSocketAddress
 import java.nio.ByteBuffer
 
-/** One call's packets (protocol.md 通话), the same as pc/mobile/call.py. Thread-safe: packets arrive on the
+/** One session's packets (protocol.md 会话), the same as pc/mobile/session.py. Thread-safe: packets arrive on the
  *  socket threads, audio leaves from the microphone thread. */
-class Call(
+class Session(
     private val send: (ByteArray, InetSocketAddress) -> Unit,
     val sid: ByteArray,
     private val sendKey: ByteArray,
     private val recvKey: ByteArray,
     @Volatile var address: InetSocketAddress,
+    /** Milliseconds between pings, the pace the computer was told (5 s in front, 45 s for the resident service). */
+    @Volatile var pingEvery: Long = 5000,
 ) {
     var onMessage: (JSONObject) -> Unit = {}
     var onAudio: (Int, ByteArray) -> Unit = { _, _ -> }
-    var onClosed: () -> Unit = {}
 
     private var n = 0L
     private var top = 0L
     private val recent = HashSet<Long>()
     private var nextOut = 0
     private val unacked = LinkedHashMap<Int, Pair<ByteArray, Long>>()
+    private val waiting = ArrayDeque<ByteArray>()          // message pieces waiting for room among the 32 unconfirmed
     private var nextIn = 1
     private val early = HashMap<Int, ByteArray>()
     private val joined = ByteArrayOutputStream()
     private var audioSeq = 0
+    @Volatile var sent = 0
+    @Volatile var got = 0
     @Volatile var heard = System.currentTimeMillis()
     @Volatile var closed = false
 
@@ -37,6 +41,7 @@ class Call(
     private fun packet(kind: Int, body: ByteArray = ByteArray(0)) {
         if (closed) return
         n++
+        sent++
         val header = "WC".toByteArray() + sid + ByteBuffer.allocate(8).putLong(n).array()
         send(header + Crypto.aead(sendKey, nonce(header.copyOfRange(6, 14)), byteArrayOf(kind.toByte()) + body,
                                   header, true), address)
@@ -49,7 +54,7 @@ class Call(
         packet(AUDIO, byteArrayOf((audioSeq shr 8).toByte(), audioSeq.toByte()) + frame)
     }
 
-    /** Reliable and in order; long messages go in 1000-byte pieces. */
+    /** Reliable and in order; long messages go in 1000-byte pieces, at most 32 of them out unconfirmed. */
     fun message(message: JSONObject) = message(message.toString())
 
     @Synchronized
@@ -59,8 +64,16 @@ class Call(
             data.copyOfRange(it, minOf(it + PIECE, data.size)) }
         pieces.forEachIndexed { i, piece ->
             nextOut++
-            val body = ByteBuffer.allocate(4).putInt(nextOut).array() + byteArrayOf(if (i < pieces.size - 1) 1 else 0) + piece
-            unacked[nextOut] = body to System.currentTimeMillis()
+            waiting.addLast(ByteBuffer.allocate(4).putInt(nextOut).array() + byteArrayOf(if (i < pieces.size - 1) 1 else 0) + piece)
+        }
+        flush()
+    }
+
+    @Synchronized
+    private fun flush() {
+        while (waiting.isNotEmpty() && unacked.size < WINDOW) {
+            val body = waiting.removeFirst()
+            unacked[ByteBuffer.wrap(body, 0, 4).int] = body to System.currentTimeMillis()
             packet(MESSAGE, body)
         }
     }
@@ -71,10 +84,7 @@ class Call(
     }
 
     fun close() {
-        if (!closed) {
-            closed = true
-            onClosed()
-        }
+        closed = true
     }
 
     fun received(data: ByteArray, from: InetSocketAddress) {
@@ -93,14 +103,19 @@ class Call(
             recent.add(counter)
             recent.removeAll { it <= top - 64 }
         }
-        address = from
+        got++
+        address = from                                   // follow his phone when it changes networks
         heard = System.currentTimeMillis()
         val body = plain.copyOfRange(1, plain.size)
         when (plain[0].toInt()) {
             PING -> packet(PONG, body)
             AUDIO -> onAudio(((body[0].toInt() and 0xFF) shl 8) or (body[1].toInt() and 0xFF), body.copyOfRange(2, body.size))
             MESSAGE -> deliver(ByteBuffer.wrap(body, 0, 4).int, body.copyOfRange(4, body.size))
-            ACK -> synchronized(this) { val upto = ByteBuffer.wrap(body, 0, 4).int; unacked.keys.removeAll { it <= upto } }
+            ACK -> synchronized(this) {
+                val upto = ByteBuffer.wrap(body, 0, 4).int
+                unacked.keys.removeAll { it <= upto }
+                flush()
+            }
             BYE -> close()
         }
     }
@@ -123,9 +138,9 @@ class Call(
         whole.forEach(onMessage)
     }
 
-    /** Call every 100 ms: resends what wasn't confirmed, pings every 5 s, hangs up after 20 s of silence. */
+    /** Call every 100 ms: resends what wasn't confirmed, pings at its pace, ends after 4 pings of silence. */
     fun tick(now: Long = System.currentTimeMillis()) {
-        if (now - heard > DEAD_MS) return close()
+        if (now - heard > maxOf(DEAD_MS, 4 * pingEvery)) return close()
         val again = synchronized(this) {
             unacked.entries.filter { now - it.value.second > RESEND_MS }.map { entry ->
                 entry.setValue(entry.value.first to now)
@@ -133,7 +148,7 @@ class Call(
             }
         }
         again.forEach { packet(MESSAGE, it) }
-        if (now - lastPing > KEEPALIVE_MS) {
+        if (now - lastPing > pingEvery) {
             lastPing = now
             ping()
         }
@@ -143,7 +158,7 @@ class Call(
 
     companion object {
         const val PING = 1; const val PONG = 2; const val AUDIO = 3; const val MESSAGE = 4; const val ACK = 5; const val BYE = 6
-        const val PIECE = 1000
-        const val KEEPALIVE_MS = 5000L; const val DEAD_MS = 20000L; const val RESEND_MS = 300L
+        const val PIECE = 1000; const val WINDOW = 32
+        const val DEAD_MS = 20000L; const val RESEND_MS = 300L
     }
 }

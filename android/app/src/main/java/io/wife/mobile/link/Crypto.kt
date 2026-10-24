@@ -84,7 +84,7 @@ object Crypto {
         hk(agree(phonePrivate, pcPublic) + secret, "link".toByteArray() + pcPublic + phonePublic)
 
     /** (phone→computer, computer→phone) */
-    fun callKeys(private: ByteArray, peer: ByteArray, link: ByteArray, sid: ByteArray, ePhone: ByteArray,
+    fun sessionKeys(private: ByteArray, peer: ByteArray, link: ByteArray, sid: ByteArray, ePhone: ByteArray,
                  ePc: ByteArray): Pair<ByteArray, ByteArray> {
         val keys = hk(agree(private, peer) + link, "call".toByteArray() + sid + ePhone + ePc, 64)
         return keys.copyOf(32) to keys.copyOfRange(32, 64)

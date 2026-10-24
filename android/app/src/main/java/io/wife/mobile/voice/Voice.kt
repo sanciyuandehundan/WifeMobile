@@ -11,13 +11,13 @@ import android.media.MediaRecorder
 import android.media.audiofx.AcousticEchoCanceler
 import android.media.audiofx.NoiseSuppressor
 import android.os.Build
-import io.wife.mobile.link.Call
+import io.wife.mobile.link.Session
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.concurrent.thread
 
-/** The phone as his microphone and her speaker during a call (protocol.md 包). The system's echo canceller keeps
+/** The phone as his microphone and her speaker during a call (protocol.md 声音的编码). The system's echo canceller keeps
  *  her voice from the speaker out of the microphone. */
-class Voice(context: Context, private val call: Call) {
+class Voice(context: Context, private val session: Session) {
     private val audio = context.getSystemService(AudioManager::class.java)
     private val frames = ConcurrentHashMap<Int, ByteArray>()
     @Volatile private var running = false
@@ -69,14 +69,14 @@ class Voice(context: Context, private val call: Call) {
         val encoder = Opus.encoder(16000, 24000, true)
         val pcm = ShortArray(320)
         record.startRecording()
-        while (running && !call.closed) {
+        while (running && !session.closed) {
             var got = 0
             while (got < pcm.size) {
                 val n = record.read(pcm, got, pcm.size - got)
                 if (n <= 0) break
                 got += n
             }
-            if (got == pcm.size) Opus.encode(encoder, pcm)?.let(call::audio)
+            if (got == pcm.size) Opus.encode(encoder, pcm)?.let(session::audio)
         }
         record.stop()
         record.release()
@@ -106,7 +106,7 @@ class Voice(context: Context, private val call: Call) {
         val decoder = Opus.decoder(48000)
         track.play()
         var missing = 0
-        while (running && !call.closed) {
+        while (running && !session.closed) {
             if (next < 0) {                                   // between sentences: wait for 80 ms of the next one
                 if (frames.size >= 4 || (frames.isNotEmpty() && System.currentTimeMillis() - firstAt > 100)) {
                     val newest = lastSeq

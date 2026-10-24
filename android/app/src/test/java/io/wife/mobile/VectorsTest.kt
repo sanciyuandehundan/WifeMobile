@@ -4,7 +4,7 @@ import io.wife.mobile.brain.Prompt
 import io.wife.mobile.brain.ReplyParser
 import io.wife.mobile.brain.Said
 import io.wife.mobile.link.Bencode
-import io.wife.mobile.link.Call
+import io.wife.mobile.link.Session
 import io.wife.mobile.link.Crypto
 import io.wife.mobile.link.Dht
 import org.json.JSONObject
@@ -57,18 +57,18 @@ class VectorsTest {
     }
 
     @Test
-    fun callKeysAndTheFirstPacket() {
-        val c = v.getJSONObject("call")
-        val (toPc, toPhone) = Crypto.callKeys(c.hex("phone_e_private"), c.hex("pc_e_public"), v.getJSONObject("link").hex("key"),
+    fun sessionKeysAndTheFirstPacket() {
+        val c = v.getJSONObject("session")
+        val (toPc, toPhone) = Crypto.sessionKeys(c.hex("phone_e_private"), c.hex("pc_e_public"), v.getJSONObject("link").hex("key"),
                                               c.hex("sid"), c.hex("phone_e_public"), c.hex("pc_e_public"))
         assertEquals(c.getString("to_pc"), toPc.hex())
         assertEquals(c.getString("to_phone"), toPhone.hex())
         val sent = mutableListOf<ByteArray>()
         val there = InetSocketAddress("127.0.0.1", 1)
-        Call({ data, _ -> sent += data }, c.hex("sid"), toPc, toPhone, there).message("""{"type":"text","text":"你好"}""")
+        Session({ data, _ -> sent += data }, c.hex("sid"), toPc, toPhone, there).message("""{"type":"say","text":"你好"}""")
         assertEquals(c.getString("first_message_packet"), sent[0].hex())
         val heard = mutableListOf<JSONObject>()
-        val computer = Call({ _, _ -> }, c.hex("sid"), toPhone, toPc, there).apply { onMessage = { heard += it } }
+        val computer = Session({ _, _ -> }, c.hex("sid"), toPhone, toPc, there).apply { onMessage = { heard += it } }
         computer.received(sent[0], there)
         computer.received(sent[0], there)                     // replayed: ignored
         assertEquals(listOf("你好"), heard.map { it.getString("text") })
@@ -81,9 +81,9 @@ class VectorsTest {
         val key1 = Crypto.bytes(32)
         val key2 = Crypto.bytes(32)
         val card = "她记得的事。".repeat(800)
-        Call({ data, _ -> sent += data }, byteArrayOf(1, 2, 3, 4), key1, key2, there).message(JSONObject().put("card", card))
+        Session({ data, _ -> sent += data }, byteArrayOf(1, 2, 3, 4), key1, key2, there).message(JSONObject().put("card", card))
         val heard = mutableListOf<JSONObject>()
-        val phone = Call({ _, _ -> }, byteArrayOf(1, 2, 3, 4), key2, key1, there).apply { onMessage = { heard += it } }
+        val phone = Session({ _, _ -> }, byteArrayOf(1, 2, 3, 4), key2, key1, there).apply { onMessage = { heard += it } }
         sent.reversed().forEach { phone.received(it, there) }  // out of order on the way
         assertTrue(sent.size > 10)
         assertEquals(card, heard.single().getString("card"))
