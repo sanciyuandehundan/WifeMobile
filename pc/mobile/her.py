@@ -191,7 +191,7 @@ class Her:
         if not result.get("accepted") or not reply:
             return
         mine = self._her([phone], reply)
-        if kind == "voice":                       # he spoke to her: she answers with her voice too
+        if kind == "voice" or item.get("voice"):  # he spoke to her, or asked for her voice: she answers with it too
             audio = await asyncio.to_thread(client.request, "tts", {"text": reply, "emotion": result.get("emotion")},
                                             timeout=90)
             mine["opus"], mine["ms"] = her_recording(audio.data)

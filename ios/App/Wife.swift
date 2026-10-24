@@ -23,6 +23,10 @@ final class Wife: ObservableObject {
     @Published var inCall = false
     @Published var near = true
     @Published var speaker = true { didSet { voice?.speaker = speaker } }
+    /// She answers what he types (and photos) with her voice too, played as it comes.
+    @Published var voiceReplies = UserDefaults.standard.bool(forKey: "voiceReplies") {
+        didSet { UserDefaults.standard.set(voiceReplies, forKey: "voiceReplies") }
+    }
     @Published var voiceprints = 0
     @Published var enrolling = ""               // what the computer said about the last voiceprint recording
     @Published var note = ""
@@ -250,8 +254,8 @@ final class Wife: ObservableObject {
         items = chat.items
         if !front, new {
             notify(text)
-        } else if front, let voice, !inCall, Date().timeIntervalSince(lastVoiceSent) < 120 {
-            player.play(id, voice, rate: 48000)                      // he spoke to her: her answer plays
+        } else if front, let voice, !inCall, voiceReplies || Date().timeIntervalSince(lastVoiceSent) < 120 {
+            player.play(id, voice, rate: 48000)                      // he spoke to her, or wants her voice: it plays
         }
     }
 
@@ -302,6 +306,7 @@ final class Wife: ObservableObject {
 
     private func wire(_ item: Item) -> [String: Any] {
         var message: [String: Any] = ["id": item.id, "t": item.t]
+        if voiceReplies { message["voice"] = true }
         switch item.kind {
         case .text:
             message["type"] = "say"

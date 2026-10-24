@@ -76,16 +76,19 @@ async def test_what_he_types_reaches_her_once_and_her_answer_waits_until_his_pho
     await settle()
     answer = next(m for m in link.sent if m["type"] == "her")
     assert answer["text"] == "欢迎回来" and "opus" not in answer                 # typed: she types back
+    link.on_message({"type": "say", "id": "a2", "t": 2, "text": "说给我听", "voice": True})
+    await settle()
+    assert [m for m in link.sent if m["type"] == "her"][-1]["ms"] == 500        # unless he asked for her voice
     assert {"type": "got", "ids": ["a1"]} in link.sent
     link.on_message(said)                                                       # sent again: only confirmed
     await settle()
-    assert [m for m, _ in her.client.asked].count("input") == 1
+    assert [m for m, _ in her.client.asked].count("input") == 2
     her.ended(link, phone)                                                      # gone before it said `got`
     again = session()
     her.connected(again, phone)
     again.on_message({"type": "hello", "app": "open"})
     assert answer in again.sent
-    again.on_message({"type": "got", "ids": [answer["id"]]})
+    again.on_message({"type": "got", "ids": [m["id"] for m in again.sent if m["type"] == "her"]})
     assert her.phones[phone.dev].outbox.waiting() == []
 
 

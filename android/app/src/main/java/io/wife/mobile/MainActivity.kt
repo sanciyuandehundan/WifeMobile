@@ -54,6 +54,8 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
@@ -517,6 +519,20 @@ private fun SettingsPage(screen: Screen, p: Palette, a: Actions, open: (String) 
     }
     Column(Modifier.fillMaxSize().systemBarsPadding().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
         Top("设置", p, back)
+        Card(p) {
+            Text("她怎么回", color = p.text, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("她总是用语音回", color = p.text, fontSize = 15.sp)
+                    Text("打字或发照片给她时，她也用自己的声音回，收到就放出来。关掉时，只有你发语音她才用声音回。",
+                         color = p.muted, fontSize = 12.sp)
+                }
+                Spacer(Modifier.width(10.dp))
+                Switch(checked = screen.voiceReplies, onCheckedChange = Wife::voiceReplies,
+                       colors = SwitchDefaults.colors(checkedTrackColor = p.accent, uncheckedTrackColor = p.border))
+            }
+        }
+        Spacer(Modifier.height(12.dp))
         Card(p) {
             Text("电脑", color = p.text, fontSize = 15.sp, fontWeight = FontWeight.Bold)
             Pair("配对的电脑", screen.computer.ifEmpty { "电脑" }, p)

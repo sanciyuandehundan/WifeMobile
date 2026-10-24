@@ -46,6 +46,7 @@ data class Screen(
     val call: Boolean = false,
     val near: Boolean = true,
     val speaker: Boolean = true,
+    val voiceReplies: Boolean = false,    // she answers what he types (and photos) with her voice too
     val voiceprints: Int = 0,
     val enrolling: String = "",           // what the computer said about the last voiceprint recording
     val note: String = "",
@@ -78,6 +79,7 @@ object Wife {
         // inside the app's own storage: Android wipes an Android/data folder it didn't create (it took 4.7 GB with it)
         offline = Offline(File(context.filesDir, "brain").apply { mkdirs() }, keep)
         chat = Chat(File(context.filesDir, "chat"))
+        screen.update { it.copy(voiceReplies = settings().getBoolean("voiceReplies", false)) }
         speech = TextToSpeech(context) { if (it == TextToSpeech.SUCCESS) speech?.language = Locale.CHINESE }
         refresh()
         shown()
@@ -94,6 +96,13 @@ object Wife {
     }
 
     fun note(text: String) = screen.update { it.copy(note = text) }
+
+    private fun settings() = app.getSharedPreferences("wife", Context.MODE_PRIVATE)
+
+    fun voiceReplies(on: Boolean) {
+        settings().edit().putBoolean("voiceReplies", on).apply()
+        screen.update { it.copy(voiceReplies = on) }
+    }
 
     private fun shown() = screen.update { it.copy(items = chat.items) }
 
@@ -202,8 +211,9 @@ object Wife {
         screen.update { it.copy(typing = "") }
         shown()
         if (!front && new) LinkService.notify(app, screen.value.her, text)
-        else if (front && voice != null && !screen.value.call && System.currentTimeMillis() - lastVoiceSent < 120_000) {
-            Player.play(id, voice, 48000)                             // he spoke to her: her answer plays
+        else if (front && voice != null && !screen.value.call &&
+                 (screen.value.voiceReplies || System.currentTimeMillis() - lastVoiceSent < 120_000)) {
+            Player.play(id, voice, 48000)                             // he spoke to her, or wants her voice: it plays
         }
     }
 
@@ -255,6 +265,7 @@ object Wife {
 
     private fun wire(item: Item): JSONObject {
         val message = JSONObject().put("id", item.id).put("t", item.t)
+        if (screen.value.voiceReplies) message.put("voice", true)
         when (item.kind) {
             "voice" -> message.put("type", "voice").put("ms", item.ms).put("opus", Crypto.b64(chat.voice(item.id) ?: ByteArray(0)))
             "photo" -> message.put("type", "photo").put("jpeg", Crypto.b64(chat.photo(item.id) ?: ByteArray(0)))
