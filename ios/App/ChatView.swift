@@ -172,7 +172,7 @@ struct Bubble: View {
 
     @ViewBuilder var content: some View {
         switch item.kind {
-        case .text where item.link.flatMap { URL(string: $0) } != nil:
+        case .text where item.link.flatMap({ URL(string: $0) }) != nil:
             Link(destination: URL(string: item.link!)!) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("▶ " + item.text).font(.system(size: 16)).foregroundStyle(P.text)
