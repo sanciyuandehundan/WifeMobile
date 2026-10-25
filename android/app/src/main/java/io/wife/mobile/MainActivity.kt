@@ -119,7 +119,7 @@ private val SENTENCES = listOf("我回来了，今天过得怎么样？", "等�
 /** What the screens ask the activity for: permissions, the camera, pickers, system settings. */
 private class Actions(val scan: () -> Unit, val call: () -> Unit, val photo: () -> Unit, val gallery: () -> Unit,
                       val brain: () -> Unit, val keepRunning: () -> Unit, val running: () -> Boolean,
-                      val microphone: () -> Boolean)
+                      val autostart: () -> Unit, val microphone: () -> Boolean)
 
 class MainActivity : ComponentActivity() {
     private var afterMicrophone: (() -> Unit)? = null
@@ -180,6 +180,16 @@ class MainActivity : ComponentActivity() {
 
     private fun running() = getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)
 
+    /** Xiaomi's own autostart list (no other way to tell it); elsewhere, or if it moved, Wife's page in the settings. */
+    private fun openAutostart() {
+        try {
+            startActivity(Intent().setClassName("com.miui.securitycenter",
+                                                "com.miui.permcenter.autostart.AutoStartManagementActivity"))
+        } catch (e: Exception) {
+            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -197,6 +207,7 @@ class MainActivity : ComponentActivity() {
                 startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
             },
             running = ::running,
+            autostart = ::openAutostart,
             microphone = { granted(Manifest.permission.RECORD_AUDIO).also { if (!it) withMicrophone {} } },
         )
         setContent {
@@ -271,6 +282,20 @@ private fun ChatPage(screen: Screen, p: Palette, a: Actions, settings: () -> Uni
                 Glyph("⚙", null, p.muted, onClick = settings)
             }
             Rule(p)
+            var running by remember { mutableStateOf(a.running()) }
+            LaunchedEffect(Unit) {                           // he may come back from the system's battery settings
+                while (true) {
+                    running = a.running()
+                    delay(3000)
+                }
+            }
+            if (!running) Row(Modifier.fillMaxWidth().background(p.soft).clickable(onClick = a.keepRunning)
+                                  .padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("还没允许 Wife 在后台一直运行：你离开电脑时，她找你的话可能弹不出来", color = p.accent, fontSize = 12.sp,
+                     modifier = Modifier.weight(1f))
+                Spacer(Modifier.width(8.dp))
+                Text("去允许", color = p.accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            }
             val list = rememberLazyListState()
             val count = screen.items.size + (if (screen.typing.isNotEmpty()) 1 else 0) + (if (screen.note.isNotEmpty()) 1 else 0)
             LaunchedEffect(count, screen.typing) { if (count > 0) list.animateScrollToItem(count - 1) }
@@ -559,7 +584,8 @@ private fun SettingsPage(screen: Screen, p: Palette, a: Actions, open: (String) 
                 Text("允许在后台一直运行")
             }
             Spacer(Modifier.height(8.dp))
-            Text("小米手机还要在 设置 → 应用设置 → 应用管理 → Wife 里打开“自启动”，省电策略选“无限制”。", color = p.muted, fontSize = 12.sp)
+            Text("小米手机还要打开 Wife 的“自启动”，并在 Wife 的省电策略里选“无限制”。", color = p.muted, fontSize = 12.sp)
+            TextButton(onClick = a.autostart) { Text("打开自启动设置", color = p.accent) }
         }
         Spacer(Modifier.height(12.dp))
         Offline(screen, p, a.brain)

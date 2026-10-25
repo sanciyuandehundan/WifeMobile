@@ -54,8 +54,16 @@ struct SettingsView: View {
                     }
                     Card {
                         Heading("收她的消息")
-                        Text("Wife 不在前台时，她的话先存在电脑上：你打开 Wife，或者 iOS 在后台叫醒它的时候就会收到，什么时候叫醒由 iOS 决定。苹果只让自己的推送服务马上叫醒 App，Wife 不经过第三方，所以不用它。")
-                            .font(.system(size: 13)).foregroundStyle(P.muted)
+                        Toggle(isOn: $wife.stayConnected) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("在后台一直连着").font(.system(size: 15)).foregroundStyle(P.text)
+                                Text("切到后台也和电脑连着，她的话马上弹出来。为了让 iOS 不停下 Wife，后台一直放着没有声音的音频（不打断你听歌），会多耗电。手动划掉 Wife 或重启手机后，要再打开一次。")
+                                    .font(.system(size: 12)).foregroundStyle(P.muted)
+                            }
+                        }
+                        .tint(P.accent)
+                        Text("关掉时，她的话先存在电脑上：你打开 Wife，或者 iOS 在后台叫醒它的时候收到，什么时候叫醒由 iOS 决定。Wife 不经过第三方，所以不用苹果的推送服务。")
+                            .font(.system(size: 12)).foregroundStyle(P.muted)
                     }
                 }
                 .padding(16)

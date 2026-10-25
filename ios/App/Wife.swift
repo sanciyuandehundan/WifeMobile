@@ -27,6 +27,10 @@ final class Wife: ObservableObject {
     @Published var voiceReplies = UserDefaults.standard.bool(forKey: "voiceReplies") {
         didSet { UserDefaults.standard.set(voiceReplies, forKey: "voiceReplies") }
     }
+    /// Connected in the background too, her words popping up at once (Stay: silence keeps iOS from stopping Wife).
+    @Published var stayConnected = UserDefaults.standard.object(forKey: "stayConnected") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(stayConnected, forKey: "stayConnected") }
+    }
     @Published var voiceprints = 0
     @Published var enrolling = ""               // what the computer said about the last voiceprint recording
     @Published var note = ""
@@ -35,6 +39,7 @@ final class Wife: ObservableObject {
     let keep = Vault()
     let chat = Chat()
     let player = Player()
+    let stay = Stay()
     lazy var link: WifeLink.Link = {                 // SwiftUI has a Link of its own
         let link = WifeLink.Link(keep: keep)
         link.onHere = { [weak self] _ in DispatchQueue.main.async { self?.refresh() } }
@@ -64,11 +69,13 @@ final class Wife: ObservableObject {
 
     func foreground() {
         front = true
+        stay.stop()
         refresh()
         UNUserNotificationCenter.current().removeAllDeliveredNotifications()
         guard paired else { return }
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         if let session {
+            pace(session, 5)
             session.message(["type": "hello", "app": "open"])
             return
         }
@@ -81,10 +88,24 @@ final class Wife: ObservableObject {
 
     func background() {
         front = false
-        retry?.cancel()
         scheduleFetch()
-        guard !inCall, let session else { return }                   // a call goes on (background audio)
-        session.hangUp()
+        guard !inCall else { return }                                // a call goes on (background audio)
+        guard paired, stayConnected else {
+            retry?.cancel()
+            session?.hangUp()
+            return
+        }
+        stay.start()
+        if let session {
+            pace(session, 45)
+            session.message(["type": "hello", "app": "standby"])
+        }
+    }
+
+    /// How often both sides ping: often in front, seldom in the background (protocol.md 会话).
+    private func pace(_ session: Session, _ seconds: Int) {
+        session.pingEvery = TimeInterval(seconds)
+        session.message(["type": "pace", "ping": seconds])
     }
 
     func scheduleFetch() {
@@ -131,9 +152,10 @@ final class Wife: ObservableObject {
     func connect() {
         guard paired, session == nil, !connecting else { return }
         connecting = true
-        let app = front ? "open" : "fetch"
+        let staying = !front && fetching == nil
+        let app = front ? "open" : staying ? "standby" : "fetch"
         work.async {
-            let made = self.link.dial(ping: 5) { session in
+            let made = self.link.dial(ping: staying ? 45 : 5) { session in
                 session.onMessage = { message in DispatchQueue.main.async { self.heard(message) } }
                 session.onAudio = { [weak self] seq, frame in self?.voice?.heard(seq, frame) }
                 session.onClosed = { DispatchQueue.main.async { self.closed(session) } }
@@ -184,7 +206,7 @@ final class Wife: ObservableObject {
     }
 
     private func retryLater() {
-        guard front, paired else { return }
+        guard front || stayConnected, paired else { return }
         attempts += 1
         let wait = [2.0, 5, 10, 30][min(attempts - 1, 3)]
         let again = DispatchWorkItem { [weak self] in self?.connect() }
@@ -377,7 +399,14 @@ final class Wife: ObservableObject {
         voice = nil
         inCall = false
         stats = ""
-        if !front, let session { session.hangUp() }
+        if !front, let session {
+            if stayConnected {
+                stay.start()
+                pace(session, 45)
+            } else {
+                session.hangUp()
+            }
+        }
     }
 
     func setNear(_ near: Bool) {
