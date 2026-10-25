@@ -73,6 +73,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -438,7 +439,14 @@ private fun Bubble(item: Item, p: Palette, playing: Boolean, play: () -> Unit, l
                         Text(item.text, color = p.text, fontSize = 16.sp)
                     }
                 }
-                else -> Text(item.text + if (item.phone) "  · 手机上的她" else "", color = if (item.his) Color.White else p.text,
+                else -> if (item.link.isNotEmpty()) {
+                    val open = LocalUriHandler.current
+                    Column(Modifier.clip(RoundedCornerShape(18.dp)).background(p.surface).clickable { open.openUri(item.link) }
+                               .padding(horizontal = 14.dp, vertical = 10.dp)) {
+                        Text("▶ " + item.text, color = p.text, fontSize = 16.sp)
+                        Text("在B站打开", color = p.accent, fontSize = 12.sp)
+                    }
+                } else Text(item.text + if (item.phone) "  · 手机上的她" else "", color = if (item.his) Color.White else p.text,
                              fontSize = 16.sp,
                              modifier = Modifier.clip(RoundedCornerShape(18.dp)).background(if (item.his) p.accent else p.surface)
                                  .padding(horizontal = 14.dp, vertical = 10.dp))

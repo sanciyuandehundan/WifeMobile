@@ -15,6 +15,7 @@ struct Item: Identifiable, Codable, Equatable {
     var ms = 0                      // a voice message's length
     var pending = false             // his, not yet confirmed by the computer
     var heard: Bool?                // his voice message: nil not heard yet, false not his voice (she did not take it)
+    var link: String?               // hers: a video she wants him to see, ``text`` its title
 
     var date: Date { Date(timeIntervalSince1970: TimeInterval(t) / 1000) }
 }

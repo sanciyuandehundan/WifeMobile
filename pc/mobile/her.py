@@ -22,7 +22,7 @@ logger = logging.getLogger("mobile.her")
 
 ADDON_ID = "wife-mobile"
 ASR_URL = "ws://127.0.0.1:9881/v1/mic/remote?name=%E6%89%8B%E6%9C%BA"     # name=手机
-TOPICS = ["reply.delta", "reply.final", "reply.cancel", "presence"]
+TOPICS = ["reply.delta", "reply.final", "reply.cancel", "presence", "share"]
 TURN_SECONDS = 130
 # what she is told about where he is, in her input's 【附属应用】 (WifeBody add-on API "context")
 ON_PHONE = {"他在哪": "在用手机和她说话"}
@@ -285,6 +285,7 @@ class Her:
         client.on("reply.final", lambda b: later(self._reply, b, True))
         client.on("reply.cancel", lambda b: later(self._tell_all, {"type": "cancel", "turn": b.get("turn_id")}))
         client.on("presence", lambda b: later(self._presence, bool(b.get("away"))))
+        client.on("share", lambda b: later(self._share, b))
         self.name = client.health().get("name", "")
         try:
             self.voiceprints = client.request("voiceprint", {"action": "count"})["count"]
@@ -331,6 +332,15 @@ class Her:
             item = self._her(phones, live["text"])
             if self.away and self.call is None:        # her voice for it is being recorded
                 self._turns[body.get("turn_id")] = (item, phones)
+
+    def _share(self, body: dict) -> None:
+        """A video she watched on her own and told him about (WifeBody mind/life.py): its title with the link, after
+        her words, to the phones her words go to."""
+        phones = [p for p in self.phones.values() if self.away or p.app == "open" and p.connected or
+                  self.call is not None and self.call.phone is p]
+        if phones and body.get("url"):
+            self._keep({"type": "her", "id": item_id(), "t": now_ms(), "text": f"《{body.get('title', '')}》",
+                        "link": str(body["url"])}, phones)
 
     def _audio_start(self, body: dict) -> None:
         if self.call is not None:

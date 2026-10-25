@@ -172,6 +172,15 @@ struct Bubble: View {
 
     @ViewBuilder var content: some View {
         switch item.kind {
+        case .text where item.link.flatMap(URL.init(string:)) != nil:
+            Link(destination: URL(string: item.link!)!) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("▶ " + item.text).font(.system(size: 16)).foregroundStyle(P.text)
+                    Text("在B站打开").font(.system(size: 12)).foregroundStyle(P.accent)
+                }
+                .padding(.horizontal, 14).padding(.vertical, 10)
+                .background(P.surface).clipShape(RoundedRectangle(cornerRadius: 18))
+            }
         case .text:
             Text(item.text).font(.system(size: 16)).foregroundStyle(item.his ? .white : P.text)
                 .padding(.horizontal, 14).padding(.vertical, 10)

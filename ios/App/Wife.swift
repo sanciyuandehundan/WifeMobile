@@ -264,7 +264,8 @@ final class Wife: ObservableObject {
         let new = !chat.has(id)
         if new {
             chat.add(Item(id: id, his: false, t: (message["t"] as? NSNumber)?.int64Value ?? Crypto.now(),
-                          kind: voice == nil ? .text : .voice, text: text, ms: ms), voice: voice)
+                          kind: voice == nil ? .text : .voice, text: text, ms: ms, link: message["link"] as? String),
+                     voice: voice)
         } else if let voice {                                        // her voice for words already here
             chat.update(id, voice: voice) {
                 $0.kind = .voice
@@ -275,7 +276,7 @@ final class Wife: ObservableObject {
         typing = ""
         items = chat.items
         if !front, new {
-            notify(text)
+            notify(message["link"] == nil ? text : "给你看这个：\(text)")
         } else if front, let voice, !inCall, voiceReplies || Date().timeIntervalSince(lastVoiceSent) < 120 {
             player.play(id, voice, rate: 48000)                      // he spoke to her, or wants her voice: it plays
         }

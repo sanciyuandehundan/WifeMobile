@@ -203,14 +203,14 @@ object Wife {
         val new = !chat.has(id)
         if (new) {
             chat.add(Item(id, false, message.optLong("t", System.currentTimeMillis()), if (voice == null) "text" else "voice",
-                          text, message.optInt("ms")), voice = voice)
+                          text, message.optInt("ms"), link = message.optString("link")), voice = voice)
         } else if (voice != null) {                                  // her voice for words already here
             chat.update(id, voice) { it.copy(kind = "voice", ms = message.optInt("ms")) }
         }
         session?.message(JSONObject().put("type", "got").put("ids", JSONArray().put(id)))
         screen.update { it.copy(typing = "") }
         shown()
-        if (!front && new) LinkService.notify(app, screen.value.her, text)
+        if (!front && new) LinkService.notify(app, screen.value.her, if (message.has("link")) "给你看这个：$text" else text)
         else if (front && voice != null && !screen.value.call &&
                  (screen.value.voiceReplies || System.currentTimeMillis() - lastVoiceSent < 120_000)) {
             Player.play(id, voice, 48000)                             // he spoke to her, or wants her voice: it plays

@@ -16,14 +16,16 @@ data class Item(
     val pending: Boolean = false,
     val heard: Boolean? = null,             // his voice message: null not heard yet, false not his voice
     val phone: Boolean = false,
+    val link: String = "",                  // hers: a video she wants him to see, ``text`` its title
 ) {
     fun json(): JSONObject = JSONObject().put("id", id).put("his", his).put("t", t).put("kind", kind).put("text", text)
-        .put("ms", ms).put("pending", pending).put("heard", heard ?: JSONObject.NULL).put("phone", phone)
+        .put("ms", ms).put("pending", pending).put("heard", heard ?: JSONObject.NULL).put("phone", phone).put("link", link)
 
     companion object {
         fun of(o: JSONObject) = Item(o.getString("id"), o.getBoolean("his"), o.getLong("t"), o.getString("kind"),
                                      o.optString("text"), o.optInt("ms"), o.optBoolean("pending"),
-                                     if (o.isNull("heard")) null else o.getBoolean("heard"), o.optBoolean("phone"))
+                                     if (o.isNull("heard")) null else o.getBoolean("heard"), o.optBoolean("phone"),
+                                     o.optString("link"))
     }
 }
 

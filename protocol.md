@@ -108,7 +108,7 @@
 | 手机→电脑 | `{"type":"call","on":true,"near"}` 开始通话；`{"type":"call","on":false}` 结束。`near=false` 时电脑给她的输入里多一行“他不在电脑前，在外面用手机和她说话” |
 | 手机→电脑 | `{"type":"enroll","opus"}` 一段录声纹的话；`{"type":"enroll","clear":true}` 清掉手机声纹 |
 | 两边 | `{"type":"got","ids":[…]}` 收到并存下了这些条 |
-| 电脑→手机 | `{"type":"her","id","t","text","ms","opus"}` 她的一条话；没有声音时只有 `text`。同一个 `id` 再来一次是补上她的声音 |
+| 电脑→手机 | `{"type":"her","id","t","text","ms","opus","link"}` 她的一条话；没有声音时只有 `text`。同一个 `id` 再来一次是补上她的声音。`link`：她自己刷B站看到、想给他看的视频，`text` 是标题，点开就是这个链接 |
 | 电脑→手机 | `{"type":"heard","id","text","ok"}` 他那段语音听成了什么；`ok=false`：声纹对不上，她没当成他说的 |
 | 电脑→手机 | `{"type":"reply","turn","text","final"}` 她正在说的话，一个字一个字地出来，只给界面看、不存；说完会另有一条 `her`。`{"type":"cancel","turn"}` 她这句被打断了 |
 | 电脑→手机 | `{"type":"state","name","awake","away","voiceprint"}` 她的名字、电脑上的她醒着没有、他是不是离开了电脑、手机声纹录了几段 |
